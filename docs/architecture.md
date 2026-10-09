@@ -68,3 +68,11 @@ To be finalized after requirements analysis.
 - Worker architecture
 - Authentication/API-key design
 - WebSocket event structure
+
+
+- Header: x-api-key
+- Missing or invalid key: 401 Unauthorized
+- Successful resolution: attach tenantId and tenantKey to the request context
+- Resolver: temporary in-memory lookup for development only
+- /api/health: public
+- Future work: MongoDB-backed lookup, secure API-key verification, and rate limiting

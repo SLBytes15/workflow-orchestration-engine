@@ -1,17 +1,45 @@
 import express from "express";
+import { apiRateLimiter } from "./middleware/rateLimit.middleware";
+import {
+  tenantMiddleware,
+  type TenantRequest,
+} from "./middleware/tenant.middleware";
 
 const app = express();
-
 const PORT = 3000;
 
-app.use(express.json());
+console.log("[STARTUP] index.ts is executing");
 
-app.get("/api/health", (_req, res) => {
+app.use((req, res, next) => {
+  console.log("[REQUEST]", req.method, req.url);
+  next();
+});
+app.use("/api", apiRateLimiter);
+
+
+app.get("/", (req, res) => {
+  res.status(200).send("Express is working!");
+});
+
+app.get("/api/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
+app.get("/api/test-tenant", tenantMiddleware, (req, res) => {
+  const tenantReq = req as TenantRequest;
+
   res.json({
-    status: "ok",
+    message: "Tenant resolved successfully",
+    tenantId: tenantReq.tenant.tenantId,
+    tenantKey: tenantReq.tenant.tenantKey,
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Backend server running on http://localhost:${PORT}`);
+
+const server = app.listen(PORT, "127.0.0.1", () => {
+  console.log(`[STARTUP] Server listening at http://127.0.0.1:${PORT}`);
+});
+
+server.on("error", (error) => {
+  console.error("[SERVER ERROR]", error);
 });
