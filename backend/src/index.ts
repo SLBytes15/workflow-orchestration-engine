@@ -4,6 +4,10 @@ import {
   tenantMiddleware,
   type TenantRequest,
 } from "./middleware/tenant.middleware";
+import {
+  tenantContextMiddleware,
+  type TenantContextRequest,
+} from "./middleware/tenantContext.middleware";
 
 const app = express();
 const PORT = 3000;
@@ -24,6 +28,16 @@ app.get("/", (req, res) => {
 app.get("/api/health", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
+
+app.get("/api/test-tenant-context",tenantContextMiddleware, (req,res)=>{
+  const tenantReq = req as TenantContextRequest;
+
+  res.status(200).json({
+    message: "Tenant context resolved",
+    tenantId: tenantReq.tenantId,
+  });
+},
+);
 
 app.get("/api/test-tenant", tenantMiddleware, (req, res) => {
   const tenantReq = req as TenantRequest;
