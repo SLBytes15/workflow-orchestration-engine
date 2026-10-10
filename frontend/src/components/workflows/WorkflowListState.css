@@ -1,0 +1,14 @@
+.workflow-list-state {
+  padding: 24px 16px;
+  margin: 16px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  text-align: center;
+}
+
+@media (max-width: 600px) {
+  .workflow-list-state {
+    padding: 16px 12px;
+  }
+}
