@@ -1,3 +1,4 @@
+import NodeShell from "./NodeShell";
 import type { WorkflowNodeData } from "./node.types";
 
 interface ConditionNodeProps {
@@ -5,12 +6,7 @@ interface ConditionNodeProps {
 }
 
 function ConditionNode({ data }: ConditionNodeProps) {
-  return (
-    <div>
-      <strong>Condition</strong>
-      <p>{data.label}</p>
-    </div>
-  );
+  return <NodeShell kind="condition" label={data.label} />;
 }
 
 export default ConditionNode;
