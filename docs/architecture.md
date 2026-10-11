@@ -76,3 +76,12 @@ To be finalized after requirements analysis.
 - Resolver: temporary in-memory lookup for development only
 - /api/health: public
 - Future work: MongoDB-backed lookup, secure API-key verification, and rate limiting
+
+
+### Tenant Request Context and Authorization
+
+The `x-tenant-id` middleware validates the presence and format of a tenant identifier and makes it available to downstream handlers.
+
+A client-supplied tenant ID is not proof of authorization. Before tenant data is accessed, tenant identity must be bound to a verified API key or authenticated session. Database queries must also enforce tenant isolation.
+
+The current request-context middleware does not independently authenticate callers or authorize access to tenant data.
