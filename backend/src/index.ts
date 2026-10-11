@@ -1,5 +1,6 @@
 import express from "express";
 import { apiRateLimiter } from "./middleware/rateLimit.middleware";
+import { errorHandler } from "./middleware/errorHandler.middleware";
 import {
   tenantMiddleware,
   type TenantRequest,
@@ -49,6 +50,7 @@ app.get("/api/test-tenant", tenantMiddleware, (req, res) => {
   });
 });
 
+app.use(errorHandler);
 
 const server = app.listen(PORT, "127.0.0.1", () => {
   console.log(`[STARTUP] Server listening at http://127.0.0.1:${PORT}`);
