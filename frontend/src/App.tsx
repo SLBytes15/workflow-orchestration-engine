@@ -1,6 +1,7 @@
 
 
 import WorkflowCard from './components/workflows/WorkflowCard'
+import NodePreview from './components/workflow/nodes/NodePreview'
 import './App.css'
 
 function App() {
@@ -21,6 +22,8 @@ function App() {
         status="Pending"
         version={2}
       />
+
+      <NodePreview />
     </main>
   )
 }
