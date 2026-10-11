@@ -77,6 +77,16 @@ To be finalized after requirements analysis.
 - /api/health: public
 - Future work: MongoDB-backed lookup, secure API-key verification, and rate limiting
 
+ member/saransh
+
+### Tenant Request Context and Authorization
+
+The `x-tenant-id` middleware validates the presence and format of a tenant identifier and makes it available to downstream handlers.
+
+A client-supplied tenant ID is not proof of authorization. Before tenant data is accessed, tenant identity must be bound to a verified API key or authenticated session. Database queries must also enforce tenant isolation.
+
+The current request-context middleware does not independently authenticate callers or authorize access to tenant data.
+
 ## 5. Tenant and Workflow Models
 
 ### Tenant
@@ -111,3 +121,4 @@ Represents a workflow owned by a tenant.
 ### Verification Status
 
 TypeScript compilation passed without errors. A live MongoDB connection and actual database index creation were not verified as part of this task. The schema's unique index declaration does not by itself confirm that the index exists in a running database.
+ main
