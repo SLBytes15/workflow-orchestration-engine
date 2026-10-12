@@ -1,12 +1,12 @@
 import NodeShell from "./NodeShell";
 import type { WorkflowNodeData } from "./node.types";
 
-interface TriggerNodeProps {
-  data: WorkflowNodeData;
-}
+type TriggerNodeProps = {
+  data: WorkflowNodeData & { type: "trigger" };
+};
 
 function TriggerNode({ data }: TriggerNodeProps) {
-  return <NodeShell kind="trigger" label={data.label} />;
+  return <NodeShell kind={data.type} label={data.label} />;
 }
 
 export default TriggerNode;

@@ -1,12 +1,12 @@
 import NodeShell from "./NodeShell";
 import type { WorkflowNodeData } from "./node.types";
 
-interface TaskNodeProps {
-  data: WorkflowNodeData;
-}
+type TaskNodeProps = {
+  data: WorkflowNodeData & { type: "task" };
+};
 
 function TaskNode({ data }: TaskNodeProps) {
-  return <NodeShell kind="task" label={data.label} />;
+  return <NodeShell kind={data.type} label={data.label} />;
 }
 
 export default TaskNode;
