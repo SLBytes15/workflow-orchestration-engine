@@ -1,12 +1,12 @@
 import NodeShell from "./NodeShell";
 import type { WorkflowNodeData } from "./node.types";
 
-interface ConditionNodeProps {
-  data: WorkflowNodeData;
-}
+type ConditionNodeProps = {
+  data: WorkflowNodeData & { type: "condition" };
+};
 
 function ConditionNode({ data }: ConditionNodeProps) {
-  return <NodeShell kind="condition" label={data.label} />;
+  return <NodeShell kind={data.type} label={data.label} />;
 }
 
 export default ConditionNode;
