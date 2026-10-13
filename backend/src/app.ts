@@ -9,13 +9,18 @@ import {
   tenantContextMiddleware,
   type TenantContextRequest,
 } from "./middleware/tenantContext.middleware";
+import { createTenantResolver } from "./services/tenantResolver";
+import { tenantAuthMiddleware } from "./middleware/tenantAuth.middleware";
+import workflowRoutes from "./routes/workflow.routes";
 
 const app = express();
+const tenantResolver = createTenantResolver();
+const requireTenantAuth = tenantAuthMiddleware(tenantResolver);
 
 app.use(express.json());
 
-app.use((req, res, next) => {
-  console.log("[REQUEST]", req.method, req.url);
+app.use((req, _res, next) => {
+  console.log("[REQUEST]", req.method, req.path);
   next();
 });
 
@@ -47,6 +52,27 @@ app.get("/api/test-tenant", tenantMiddleware, (req, res) => {
     tenantKey: tenantReq.tenant.tenantKey,
   });
 });
+
+app.get("/api/test-authenticated-tenant", requireTenantAuth, (req, res) => {
+  const tenantContext = req.tenantContext;
+
+  if (!tenantContext) {
+    res.status(401).json({
+      error: {
+        code: "UNAUTHORIZED",
+        message: "A valid API key is required",
+      },
+    });
+    return;
+  }
+
+  res.status(200).json({
+    message: "Tenant authenticated successfully",
+    tenantId: tenantContext.tenantId.toString(),
+  });
+});
+
+app.use("/api/workflows", workflowRoutes);
 
 app.use(errorHandler);
 
