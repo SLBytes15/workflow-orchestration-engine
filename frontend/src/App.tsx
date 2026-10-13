@@ -1,14 +1,17 @@
-
 import WorkflowsPage from './pages/WorkflowsPage'
+import Sidebar from './components/layout/Sidebar'
 import NodePreview from './components/workflow/nodes/NodePreview'
 import './App.css'
 
 function App() {
   return (
-    <main className="app">
-      <WorkflowsPage />
-      <NodePreview />
-    </main>
+    <div className="app-layout">
+      <Sidebar />
+      <main className="app">
+        <WorkflowsPage />
+        <NodePreview />
+      </main>
+    </div>
   )
 }
 

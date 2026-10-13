@@ -204,3 +204,19 @@
     font-size: 28px;
   }
 }
+
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.app {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  .app-layout {
+    flex-direction: column;
+  }
+}
