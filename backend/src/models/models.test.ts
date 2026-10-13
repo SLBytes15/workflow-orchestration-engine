@@ -38,8 +38,11 @@ describe("Workflow schema", () => {
       );
     });
   });
-  it("references Tenant from tenantId", () => {
-    assert.equal(WorkflowModel.schema.path("tenantId").options.ref, "Tenant");
+  it("uses an ObjectId reference to Tenant for tenantId", () => {
+    const tenantIdPath = WorkflowModel.schema.path("tenantId");
+
+    assert.equal(tenantIdPath.instance, "ObjectId");
+    assert.equal(tenantIdPath.options.ref, "Tenant");
   });
   it("defaults status and version and validates allowed statuses", async () => {
     const workflow = new WorkflowModel({
@@ -64,3 +67,4 @@ describe("Workflow schema", () => {
     assert.equal(WorkflowModel.schema.options.timestamps, true);
   });
 });
+
