@@ -1,8 +1,16 @@
 export type WorkflowNodeType = "trigger" | "task" | "condition";
 
-export interface WorkflowNodeData {
+interface WorkflowNodeBase {
   label: string;
-  type: WorkflowNodeType;
+  config: Record<string, string>;
+}
+
+export type WorkflowNodeData = WorkflowNodeBase &
+  ({ type: "trigger" } | { type: "task" } | { type: "condition" });
+
+export interface WorkflowCanvasNode {
+  id: string;
+  data: WorkflowNodeData;
 }
 
 export const NODE_KIND_LABEL: Record<WorkflowNodeType, string> = {
