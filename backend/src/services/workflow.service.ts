@@ -17,11 +17,19 @@ export interface CreatedWorkflow {
 
 export interface WorkflowServiceDependencies {
   createWorkflowRecord(record: CreatedWorkflow): Promise<unknown>;
+  findWorkflowRecordsByTenant(tenantId: Types.ObjectId): Promise<unknown[]>;
 }
 
 const databaseDependencies: WorkflowServiceDependencies = {
   async createWorkflowRecord(record) {
     return WorkflowModel.create(record);
+  },
+
+  async findWorkflowRecordsByTenant(tenantId) {
+    return WorkflowModel.find({ tenantId })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
   },
 };
 
@@ -33,17 +41,27 @@ export function createWorkflowService(
       tenantId,
       input,
     }: CreateWorkflowCommand): Promise<unknown> {
+      const name = input.name.trim();
+
+      if (!name) {
+        throw new Error("Workflow name must not be empty");
+      }
+
       const record: CreatedWorkflow = {
         tenantId,
-        name: input.name,
+        name,
         ...(input.description !== undefined
-          ? { description: input.description }
+          ? { description: input.description.trim() }
           : {}),
         status: "draft",
         version: 1,
       };
 
       return dependencies.createWorkflowRecord(record);
+    },
+
+    async listWorkflows(tenantId: Types.ObjectId): Promise<unknown[]> {
+      return dependencies.findWorkflowRecordsByTenant(tenantId);
     },
   };
 }
