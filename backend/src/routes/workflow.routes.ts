@@ -1,50 +1,60 @@
 import { Router } from "express";
 import { tenantAuthMiddleware } from "../middleware/tenantAuth.middleware";
 import { validateRequest } from "../middleware/validateRequest.middleware";
-import { createTenantResolver } from "../services/tenantResolver";
+import {
+  createTenantResolver,
+  type TenantResolver,
+} from "../services/tenantResolver";
+import {
+  createWorkflowService,
+  type WorkflowServiceDependencies,
+} from "../services/workflow.service";
 import { validateCreateWorkflow } from "../validators/workflow.validator";
-import { createWorkflowService } from "../services/workflow.service";
 
-const workflowService = createWorkflowService();
+export function createWorkflowRouter(
+  resolver: TenantResolver = createTenantResolver(),
+  service = createWorkflowService(),
+) {
+  const router = Router();
+  const requireTenantAuth = tenantAuthMiddleware(resolver);
 
-const router = Router();
+  router.post(
+    "/",
+    requireTenantAuth,
+    validateRequest(validateCreateWorkflow),
+    async (req, res, next) => {
+      try {
+        const tenantContext = req.tenantContext;
 
-const requireTenantAuth = tenantAuthMiddleware(createTenantResolver());
+        if (!tenantContext) {
+          res.status(401).json({
+            error: {
+              code: "UNAUTHORIZED",
+              message: "A valid API key is required",
+            },
+          });
+          return;
+        }
 
-router.post(
-  "/",
-  requireTenantAuth,
-  validateRequest(validateCreateWorkflow),
-  async (req, res, next) => {
-    try {
-      const tenantContext = req.tenantContext;
-
-      if (!tenantContext) {
-        res.status(401).json({
-          error: {
-            code: "UNAUTHORIZED",
-            message: "A valid API key is required",
+        const workflow = await service.createWorkflow({
+          tenantId: tenantContext.tenantId,
+          input: res.locals.validatedBody as {
+            name: string;
+            description?: string;
           },
         });
-        return;
+
+        res.status(201).json({
+          message: "Workflow created successfully",
+          workflow,
+        });
+      } catch (error) {
+        next(error);
       }
+    },
+  );
 
-      const workflow = await workflowService.createWorkflow({
-        tenantId: tenantContext.tenantId,
-        input: res.locals.validatedBody as {
-          name: string;
-          description?: string;
-        },
-      });
+  return router;
+}
 
-      res.status(201).json({
-        message: "Workflow created successfully",
-        workflow,
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
-);
-
-export default router;
+export default createWorkflowRouter();

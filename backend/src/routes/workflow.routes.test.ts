@@ -1,0 +1,173 @@
+import assert from "node:assert/strict";
+import { after, before, test } from "node:test";
+import express from "express";
+import type { Server } from "node:http";
+import { Types } from "mongoose";
+
+import { errorHandler } from "../middleware/errorHandler.middleware";
+import type { TenantResolver } from "../services/tenantResolver";
+import { createWorkflowRouter } from "./workflow.routes";
+
+const tenantId = new Types.ObjectId();
+
+let server: Server;
+let baseUrl: string;
+
+const resolver: TenantResolver = {
+  async resolverTenant(apiKey: string) {
+    if (apiKey !== "valid-test-key") {
+      return null;
+    }
+
+    // Keep the test independent of the real database.
+    return {
+      tenantId,
+    } as NonNullable<
+      Awaited<ReturnType<TenantResolver["resolverTenant"]>>
+    >;
+  },
+};
+
+const createdWorkflow = {
+  _id: "workflow-test-id",
+  tenantId,
+  name: "Demo workflow",
+  description: "Route test",
+  status: "draft" as const,
+  version: 1 as const,
+};
+
+const service = {
+  async createWorkflow(command: {
+    tenantId: Types.ObjectId;
+    input: { name: string; description?: string };
+  }) {
+    return {
+      ...createdWorkflow,
+      tenantId: command.tenantId,
+      name: command.input.name,
+      description: command.input.description,
+    };
+  },
+
+  async listWorkflows() {
+    return [];
+  },
+};
+
+before(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use("/api/workflows", createWorkflowRouter(resolver, service));
+  app.use(errorHandler);
+
+  await new Promise<void>((resolve) => {
+    server = app.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+
+  if (!address || typeof address === "string") {
+    throw new Error("Could not determine test server address");
+  }
+
+  baseUrl = `http://127.0.0.1:${address.port}/api/workflows`;
+});
+
+after(async () => {
+  if (server) {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  }
+});
+
+test("rejects a request without an API key", async () => {
+  const response = await fetch(baseUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Demo workflow" }),
+  });
+
+  assert.equal(response.status, 401);
+});
+
+test("rejects an unresolved API key", async () => {
+  const response = await fetch(baseUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": "invalid-test-key",
+    },
+    body: JSON.stringify({ name: "Demo workflow" }),
+  });
+
+  assert.equal(response.status, 401);
+});
+
+test("creates a workflow using the trusted tenant context", async () => {
+  const response = await fetch(baseUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": "valid-test-key",
+    },
+    body: JSON.stringify({
+      name: "Demo workflow",
+      description: "Route test",
+    }),
+  });
+
+  assert.equal(response.status, 201);
+
+  const body = (await response.json()) as {
+    workflow: {
+      tenantId: string;
+      name: string;
+      status: string;
+      version: number;
+    };
+  };
+
+  assert.equal(body.workflow.tenantId, tenantId.toString());
+  assert.equal(body.workflow.name, "Demo workflow");
+  assert.equal(body.workflow.status, "draft");
+  assert.equal(body.workflow.version, 1);
+});
+
+test("rejects client-supplied tenantId, status, and version", async () => {
+  const cases = [
+    { name: "Demo workflow", tenantId: new Types.ObjectId().toString() },
+    { name: "Demo workflow", status: "active" },
+    { name: "Demo workflow", version: 99 },
+  ];
+
+  for (const payload of cases) {
+    const response = await fetch(baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "valid-test-key",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    assert.equal(response.status, 400);
+  }
+});
+
+test("rejects a blank workflow name", async () => {
+  const response = await fetch(baseUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": "valid-test-key",
+    },
+    body: JSON.stringify({ name: "   " }),
+  });
+
+  assert.equal(response.status, 400);
+});
