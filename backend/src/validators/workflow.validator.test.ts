@@ -19,18 +19,22 @@ it("rejects a client-supplied status during creation", () => {
 });
 
   
+
 it("accepts a valid workflow and trims editable fields", () => {
   const result = validateCreateWorkflow({
     name: "  Order Processing  ",
     description: "  Process an order  ",
+    graph: validGraph,
   });
 
   assert.equal(result.valid, true);
   assert.deepEqual(result.data, {
     name: "Order Processing",
     description: "Process an order",
+    graph: validGraph,
   });
 });
+
 
 
 
@@ -151,4 +155,74 @@ describe("validateUpdateWorkflow", () => {
 
     assert.equal(result.valid, false);
   });
+
+it("rejects a missing graph", () => {
+  const result = validateCreateWorkflow({
+    name: "Order Processing",
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((error) => error.includes("graph")));
 });
+
+it("rejects an invalid graph", () => {
+  const result = validateCreateWorkflow({
+    name: "Order Processing",
+    graph: {
+      version: 1,
+      nodes: [],
+      edges: [],
+    },
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((error) => error.includes("trigger")));
+});
+
+});
+
+
+const validGraph = {
+  version: 1 as const,
+  nodes: [
+    {
+      id: "trigger-1",
+      type: "trigger" as const,
+      position: { x: 100, y: 100 },
+      data: { type: "trigger" as const, label: "Order created" },
+    },
+    {
+      id: "condition-1",
+      type: "condition" as const,
+      position: { x: 350, y: 100 },
+      data: { type: "condition" as const, label: "Payment approved?" },
+    },
+    {
+      id: "task-1",
+      type: "task" as const,
+      position: { x: 600, y: 40 },
+      data: { type: "task" as const, label: "Confirm order" },
+    },
+    {
+      id: "task-2",
+      type: "task" as const,
+      position: { x: 600, y: 200 },
+      data: { type: "task" as const, label: "Reject order" },
+    },
+  ],
+  edges: [
+    { id: "edge-1", source: "trigger-1", target: "condition-1" },
+    {
+      id: "edge-2",
+      source: "condition-1",
+      target: "task-1",
+      sourceHandle: "true",
+    },
+    {
+      id: "edge-3",
+      source: "condition-1",
+      target: "task-2",
+      sourceHandle: "false",
+    },
+  ],
+};

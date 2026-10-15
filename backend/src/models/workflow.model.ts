@@ -29,10 +29,15 @@ const workflowSchema = new Schema(
       min: 1,
       default: 1,
     },
+
+    graph: {
+      type: Schema.Types.Mixed,
+      required: true,
+    },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 const WorkflowModel = model("Workflow", workflowSchema);

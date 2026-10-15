@@ -7,6 +7,7 @@ import { Types } from "mongoose";
 import { errorHandler } from "../middleware/errorHandler.middleware";
 import type { TenantResolver } from "../services/tenantResolver";
 import { createWorkflowRouter } from "./workflow.routes";
+import { validGraph } from "../validators/validGraph.fixture";
 
 const tenantId = new Types.ObjectId();
 
@@ -33,6 +34,7 @@ const createdWorkflow = {
   tenantId,
   name: "Demo workflow",
   description: "Route test",
+  graph: validGraph,
   status: "draft" as const,
   version: 1 as const,
 };
@@ -40,13 +42,14 @@ const createdWorkflow = {
 const service = {
   async createWorkflow(command: {
     tenantId: Types.ObjectId;
-    input: { name: string; description?: string };
+    input: { name: string; description?: string; graph: typeof validGraph };
   }) {
     return {
       ...createdWorkflow,
       tenantId: command.tenantId,
       name: command.input.name,
       description: command.input.description,
+      graph: command.input.graph,
     };
   },
 
@@ -118,6 +121,7 @@ test("creates a workflow using the trusted tenant context", async () => {
     body: JSON.stringify({
       name: "Demo workflow",
       description: "Route test",
+      graph: validGraph,
     }),
   });
 
@@ -129,6 +133,7 @@ test("creates a workflow using the trusted tenant context", async () => {
       name: string;
       status: string;
       version: number;
+      graph: typeof validGraph;
     };
   };
 
@@ -136,13 +141,18 @@ test("creates a workflow using the trusted tenant context", async () => {
   assert.equal(body.workflow.name, "Demo workflow");
   assert.equal(body.workflow.status, "draft");
   assert.equal(body.workflow.version, 1);
+  assert.deepEqual(body.workflow.graph, validGraph)
 });
 
 test("rejects client-supplied tenantId, status, and version", async () => {
   const cases = [
-    { name: "Demo workflow", tenantId: new Types.ObjectId().toString() },
-    { name: "Demo workflow", status: "active" },
-    { name: "Demo workflow", version: 99 },
+    {
+      name: "Demo workflow",
+      graph: validGraph,
+      tenantId: new Types.ObjectId().toString(),
+    },
+    { name: "Demo workflow", graph: validGraph, status: "active" },
+    { name: "Demo workflow", graph: validGraph, version: 99 },
   ];
 
   for (const payload of cases) {
@@ -166,7 +176,7 @@ test("rejects a blank workflow name", async () => {
       "Content-Type": "application/json",
       "x-api-key": "valid-test-key",
     },
-    body: JSON.stringify({ name: "   " }),
+    body: JSON.stringify({ name: "   ", graph: validGraph }),
   });
 
   assert.equal(response.status, 400);

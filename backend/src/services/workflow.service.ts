@@ -1,19 +1,24 @@
 import type { Types } from "mongoose";
 import WorkflowModel from "../models/workflow.model";
 import type { CreateWorkflowInput } from "../validators/workflow.validator";
+import type { WorkflowGraph } from "../validators/workflow-graph.validator";
+
 
 export interface CreateWorkflowCommand {
   tenantId: Types.ObjectId;
   input: CreateWorkflowInput;
 }
 
+
 export interface CreatedWorkflow {
   tenantId: Types.ObjectId;
   name: string;
   description?: string;
+  graph: WorkflowGraph;
   status: "draft";
   version: 1;
 }
+
 
 export interface WorkflowServiceDependencies {
   createWorkflowRecord(record: CreatedWorkflow): Promise<unknown>;
@@ -47,15 +52,18 @@ export function createWorkflowService(
         throw new Error("Workflow name must not be empty");
       }
 
-      const record: CreatedWorkflow = {
-        tenantId,
-        name,
-        ...(input.description !== undefined
-          ? { description: input.description.trim() }
-          : {}),
-        status: "draft",
-        version: 1,
-      };
+      
+const record: CreatedWorkflow = {
+  tenantId,
+  name,
+  ...(input.description !== undefined
+    ? { description: input.description.trim() }
+    : {}),
+  graph: input.graph,
+  status: "draft",
+  version: 1,
+};
+
 
       return dependencies.createWorkflowRecord(record);
     },

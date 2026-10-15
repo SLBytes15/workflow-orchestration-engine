@@ -5,11 +5,12 @@ import {
   createTenantResolver,
   type TenantResolver,
 } from "../services/tenantResolver";
+import { createWorkflowService } from "../services/workflow.service";
 import {
-  createWorkflowService,
-  type WorkflowServiceDependencies,
-} from "../services/workflow.service";
-import { validateCreateWorkflow } from "../validators/workflow.validator";
+  validateCreateWorkflow,
+  type CreateWorkflowInput,
+} from "../validators/workflow.validator";
+
 
 export function createWorkflowRouter(
   resolver: TenantResolver = createTenantResolver(),
@@ -38,10 +39,8 @@ export function createWorkflowRouter(
 
         const workflow = await service.createWorkflow({
           tenantId: tenantContext.tenantId,
-          input: res.locals.validatedBody as {
-            name: string;
-            description?: string;
-          },
+
+          input: res.locals.validatedBody as CreateWorkflowInput,
         });
 
         res.status(201).json({

@@ -1,12 +1,11 @@
+import type { NodeProps } from "@xyflow/react";
 import NodeShell from "./NodeShell";
-import type { WorkflowNodeData } from "./node.types";
+import type { TaskNodeData, WorkflowFlowNode } from "./node.types";
 
-type TaskNodeProps = {
-  data: WorkflowNodeData & { type: "task" };
-};
+type TaskFlowNode = WorkflowFlowNode & { data: TaskNodeData };
 
-function TaskNode({ data }: TaskNodeProps) {
-  return <NodeShell kind={data.type} label={data.label} />;
+function TaskNode({ data, selected }: NodeProps<TaskFlowNode>) {
+  return <NodeShell kind="task" label={data.label} selected={selected} />;
 }
 
 export default TaskNode;
