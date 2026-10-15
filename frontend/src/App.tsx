@@ -3,6 +3,7 @@ import { useState } from 'react'
 import WorkflowsPage from './pages/WorkflowsPage'
 import Sidebar from './components/layout/Sidebar'
 import NodePreview from './components/workflow/nodes/NodePreview'
+import type { WorkflowGraph } from './api/workflowApi'
 import './App.css'
 
 type Page =
@@ -14,6 +15,8 @@ type Page =
 
 function App() {
   const [activePage, setActivePage] = useState<Page>('Dashboard')
+  const [workflowGraph, setWorkflowGraph] =
+    useState<WorkflowGraph | null>(null)
 
   return (
     <div className="app-layout">
@@ -27,16 +30,22 @@ function App() {
           <>
             <h1>Dashboard</h1>
             <p>Welcome to the Workflow App.</p>
-            <WorkflowsPage />
+            <WorkflowsPage graph={workflowGraph} />
           </>
         )}
 
-        {activePage === 'Workflows' && <WorkflowsPage />}
+        {activePage === 'Workflows' && (
+          <WorkflowsPage graph={workflowGraph} />
+        )}
 
         {activePage === 'Node Preview' && (
           <>
             <h1>Node Preview</h1>
-            <NodePreview />
+            <NodePreview onGraphChange={setWorkflowGraph} />
+            <p>
+              Graph status:{' '}
+              {workflowGraph ? 'Graph available' : 'Waiting for graph'}
+            </p>
           </>
         )}
 
