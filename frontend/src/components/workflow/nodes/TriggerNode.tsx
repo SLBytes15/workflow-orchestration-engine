@@ -1,13 +1,11 @@
+import type { NodeProps } from "@xyflow/react";
 import NodeShell from "./NodeShell";
-import type { WorkflowNodeData } from "./node.types";
+import type { WorkflowFlowNode, TriggerNodeData } from "./node.types";
 
-type TriggerNodeProps = {
-  data: WorkflowNodeData & { type: "trigger" };
-  selected?: boolean;
-};
+type TriggerFlowNode = WorkflowFlowNode & { data: TriggerNodeData };
 
-function TriggerNode({ data, selected }: TriggerNodeProps) {
-  return <NodeShell kind={data.type} label={data.label} selected={selected} />;
+function TriggerNode({ data, selected }: NodeProps<TriggerFlowNode>) {
+  return <NodeShell kind="trigger" label={data.label} selected={selected} />;
 }
 
 export default TriggerNode;

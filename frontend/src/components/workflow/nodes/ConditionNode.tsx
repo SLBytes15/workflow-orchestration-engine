@@ -1,13 +1,11 @@
+import type { NodeProps } from "@xyflow/react";
 import NodeShell from "./NodeShell";
-import type { WorkflowNodeData } from "./node.types";
+import type { ConditionNodeData, WorkflowFlowNode } from "./node.types";
 
-type ConditionNodeProps = {
-  data: WorkflowNodeData & { type: "condition" };
-  selected?: boolean;
-};
+type ConditionFlowNode = WorkflowFlowNode & { data: ConditionNodeData };
 
-function ConditionNode({ data, selected }: ConditionNodeProps) {
-  return <NodeShell kind={data.type} label={data.label} selected={selected} />;
+function ConditionNode({ data, selected }: NodeProps<ConditionFlowNode>) {
+  return <NodeShell kind="condition" label={data.label} selected={selected} />;
 }
 
 export default ConditionNode;

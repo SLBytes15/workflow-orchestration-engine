@@ -1,20 +1,36 @@
 .workflow-node {
-  width: 100%;
-  max-width: 240px;
+  position: relative;
+  width: 190px;
   box-sizing: border-box;
-  padding: 12px 16px;
+  padding: 16px;
   border: 1px solid #d9d9d9;
   border-left-width: 4px;
   border-radius: 10px;
   background: #ffffff;
   text-align: left;
-  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .workflow-node--selected {
   border-color: #4c51bf;
   box-shadow: 0 0 0 3px rgba(76, 81, 191, 0.2);
-  transform: translateY(-2px);
+}
+
+.workflow-node__handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #ffffff;
+  background: #4c51bf;
+}
+
+.workflow-node__handle--true {
+  left: 35%;
+  background: #2f855a;
+}
+
+.workflow-node__handle--false {
+  left: 65%;
+  background: #c53030;
 }
 
 .workflow-node__kind {
@@ -95,29 +111,15 @@
 }
 
 .node-preview__canvas {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  min-height: 180px;
-  padding: 20px;
+  height: 520px;
+  min-width: 0;
+  overflow: hidden;
   border: 1px dashed #a0aec0;
   border-radius: 10px;
   background: #ffffff;
 }
 
-.node-preview__node {
-  align-self: center;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.node-preview__node:focus-visible {
-  outline: 3px solid #4c51bf;
-  outline-offset: 4px;
+.node-preview__canvas .react-flow {
   border-radius: 10px;
 }
 
@@ -163,6 +165,27 @@
   line-height: 1.5;
 }
 
+.node-preview__payload {
+  margin-top: 18px;
+  font-size: 13px;
+}
+
+.node-preview__payload summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.node-preview__payload pre {
+  max-height: 240px;
+  overflow: auto;
+  padding: 12px;
+  background: #f1f5f9;
+  color: #1e293b;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 760px) {
   .node-preview {
     padding: 18px;
@@ -179,6 +202,6 @@
   }
 
   .node-preview__canvas {
-    grid-template-columns: 1fr;
+    height: 480px;
   }
 }
