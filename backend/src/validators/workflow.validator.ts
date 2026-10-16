@@ -79,7 +79,7 @@ export function validateCreateWorkflow(input: unknown): ValidationResult {
     return { valid: false, errors };
   }
 
- 
+
   const data: CreateWorkflowInput = {
     name: (body.name as string).trim(),
     graph: body.graph as WorkflowGraph,

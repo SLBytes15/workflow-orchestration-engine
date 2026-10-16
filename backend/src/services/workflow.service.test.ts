@@ -78,7 +78,7 @@ const validGraph: WorkflowGraph = {
 };
 
 
-  
+
 test("creates a workflow for the supplied tenant and trims its name", async () => {
   const context = setup();
   const tenantId = new Types.ObjectId();

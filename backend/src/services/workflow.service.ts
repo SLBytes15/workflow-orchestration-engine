@@ -52,7 +52,7 @@ export function createWorkflowService(
         throw new Error("Workflow name must not be empty");
       }
 
-      
+
 const record: CreatedWorkflow = {
   tenantId,
   name,

@@ -1,0 +1,32 @@
+﻿{
+    "edges":  [
+
+              ],
+    "version":  1,
+    "nodes":  [
+                  {
+                      "position":  {
+                                       "y":  100,
+                                       "x":  100
+                                   },
+                      "data":  {
+                                   "type":  "trigger",
+                                   "label":  "Order created"
+                               },
+                      "id":  "trigger-1",
+                      "type":  "trigger"
+                  },
+                  {
+                      "position":  {
+                                       "y":  100,
+                                       "x":  300
+                                   },
+                      "data":  {
+                                   "type":  "task",
+                                   "label":  "Process order"
+                               },
+                      "id":  "trigger-1",
+                      "type":  "task"
+                  }
+              ]
+}
