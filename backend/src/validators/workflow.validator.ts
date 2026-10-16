@@ -1,3 +1,20 @@
+import {
+  validateWorkflowGraph,
+  type WorkflowGraph,
+} from "./workflow-graph.validator";
+
+export interface CreateWorkflowInput {
+  name: string;
+  description?: string;
+  graph: WorkflowGraph;
+}
+
+export interface ValidationResult<T = CreateWorkflowInput> {
+  valid: boolean;
+  errors: string[];
+  data?: T;
+}
+
 export interface CreateWorkflowInput {
   name: string;
   description?: string;
@@ -39,13 +56,11 @@ export function validateCreateWorkflow(input: unknown): ValidationResult {
     errors.push("description must not exceed 2000 characters");
   }
 
-  
-if (body.status !== undefined) {
-  errors.push(
-    "status cannot be supplied during creation; new workflows start as draft",
-  );
-}
-
+  if (body.status !== undefined) {
+    errors.push(
+      "status cannot be supplied during creation; new workflows start as draft",
+    );
+  }
 
   // These fields are server-managed, not client-controlled.
   if (body.tenantId !== undefined) {
@@ -56,25 +71,33 @@ if (body.status !== undefined) {
     errors.push("version must not be supplied in the request body");
   }
 
+
+  if (body.graph === undefined) {
+    errors.push("graph is required");
+  } else {
+    errors.push(
+      ...validateWorkflowGraph(body.graph).map((error) => `graph: ${error}`),
+    );
+  }
+
+
   if (errors.length > 0) {
     return { valid: false, errors };
   }
 
+
   const data: CreateWorkflowInput = {
     name: (body.name as string).trim(),
+    graph: body.graph as WorkflowGraph,
   };
 
   if (typeof body.description === "string") {
     data.description = body.description.trim();
   }
 
-  if (body.status !== undefined) {
-    data.status = body.status as CreateWorkflowInput["status"];
-  }
-
   return { valid: true, errors: [], data };
-}
 
+}
 
 export interface UpdateWorkflowInput {
   name?: string;
@@ -146,4 +169,3 @@ export function validateUpdateWorkflow(
 
   return { valid: true, errors: [], data };
 }
-

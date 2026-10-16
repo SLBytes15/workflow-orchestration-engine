@@ -1,119 +1,188 @@
-﻿# Workflow Graph Contract
+# Workflow Graph Contract — agreed
 
-## Status
+Status: **agreed** with Saransh and Mahak on 15-Oct-2026.
+This is the canonical schema for workflow graphs. Both frontend and backend
+MUST conform. The canvas stores the React Flow graph verbatim; the backend
+validates and projects an execution spec only at run time.
 
-This document describes the agreed workflow graph structure and validation rules. Node-specific configuration validation is pending Nithin's complete specification.
+---
 
-## 1. Stored Graph Payload
+## 1. Stored graph shape
 
-The stored graph format is `{ version: 1, nodes, edges }`. Save the React Flow graph in this format without replacing it with an ExecutionSpec.
+```ts
+{
+  "version": 1,
+  "nodes":  WorkflowFlowNode[],
+  "edges":  WorkflowFlowEdge[]
+}
+```
 
-## 2. Node Types
+- `version: 1` — bump on breaking changes.
+- `nodes` and `edges` are stored as React Flow arrays, unmodified.
+- The backend does **not** receive a separate "API payload" — it receives
+  this exact shape.
 
-Supported node types:
+---
 
-- `trigger`
+## 2. Node shape
 
-- `task`
+```ts
+type WorkflowNodeType = "trigger" | "task" | "condition";
 
-- `condition`
+interface WorkflowNodeData {
+  type: "trigger" | "task" | "condition";   // MUST match outer node.type
+  label: string;
+  config?: TriggerConfig | TaskConfig | ConditionConfig;  // optional in canvas
+}
 
-Each node contains:
+type WorkflowFlowNode = Node<WorkflowNodeData, WorkflowNodeType>;
+```
 
-- `id`: unique, non-empty identifier
+Outer node required fields: `id` (unique, non-empty), `type` (one of the
+three kinds), `position: { x: number, y: number }` (finite numbers), and
+`data: WorkflowNodeData`. Backend validator requires `data.type === node.type`.
 
-- `type`: supported node type
+### Per-kind config (typed)
 
-- `position`: finite numeric `x` and `y`
+```ts
+// ── Trigger ────────────────────────────────────────────────────────
+type TriggerConfig =
+  | { kind: "webhook";  method: "GET"|"POST"|"PUT"|"DELETE"; path: string; auth?: "none"|"apiKey"|"hmac" }
+  | { kind: "schedule"; cron: string; timezone: string }       // IANA timezone
+  | { kind: "event";    source: string; eventName: string; filter?: Record<string, unknown> };
 
-- `data.type`: must match the top-level `type`
+// ── Task ───────────────────────────────────────────────────────────
+type TaskAction = "http" | "sendEmail" | "sendSlack" | "dbQuery" | "transform";
 
-- `data.label`: non-empty string
+type TaskConfig =
+  | { action: "http";      method: "GET"|"POST"|"PUT"|"DELETE"|"PATCH"; url: string; headers?: Record<string,string>; body?: unknown; timeoutMs?: number }
+  | { action: "sendEmail"; to: string; subject: string; body: string; cc?: string[] }
+  | { action: "sendSlack"; channel: string; message: string; asUser?: string }
+  | { action: "dbQuery";   connection: string; query: string; params?: unknown[] }
+  | { action: "transform"; expression: string };
 
-The current frontend `WorkflowNodeData` type defines only `type` and `label`. Do not assume additional configuration fields until the team confirms them.
+// Optional task-level controls (apply to any action):
+interface TaskExtras {
+  retry?: { attempts: number; backoffMs: number };
+  continueOnError?: boolean;
+}
 
-## 3. Edges and Conditional Branching
+// ── Condition ──────────────────────────────────────────────────────
+type ConditionOp =
+  | "equals"|"notEquals"|"gt"|"gte"|"lt"|"lte"
+  | "contains"|"startsWith"|"matches"|"truthy";
 
-Each edge contains:
+interface ConditionClause { left: string; op: ConditionOp; right?: unknown }
 
-- `id`: unique, non-empty identifier
+type ConditionConfig =
+  | { type: "clause"; clause: ConditionClause }
+  | { type: "group";  logic: "and"|"or"; clauses: ConditionClause[] }
+  | { type: "js";     expression: string };
+```
 
-- `source`: existing source node ID
+---
 
-- `target`: existing target node ID
+## 3. Edge shape
 
-- `sourceHandle`: optional source handle
+```ts
+interface WorkflowEdgeData {
+  label?: string;
+  guard?: { expression: string };
+}
 
-Condition branches use the exact, case-sensitive handles `true` and `false`. Every condition must have both outgoing branches.
+type WorkflowFlowEdge = Edge<WorkflowEdgeData, "default" | "smoothstep">;
+```
 
-The inspected backend interface does not currently declare `version`, `targetHandle`, or edge `data`. Confirm whether the latter two are required before adding them to the contract.
+Minimum fields used by validation: `id`, `source`, `target`.
+Optional: `sourceHandle`, `targetHandle`, `data`.
 
-## 4. Agreed Validation Rules
+### Handle IDs
 
-The graph must:
+| Node kind  | Target (input) | Source (output)                        |
+| ---------- | -------------- | -------------------------------------- |
+| trigger    | (none)         | (none — entry point)                   |
+| task       | `"target"`     | `"source"`                             |
+| condition  | `"target"`     | `"true"`, `"false"` (both required)    |
 
-1. Have `version: 1`.
+> **CRITICAL.** Condition source handles are **literally `"true"` and `"false"`**.
+> These values appear on outgoing edges as `edge.sourceHandle` and are the only
+> mechanism the execution engine uses to route condition branches. Any
+> alternative ("branch-true", "yes"/"no", etc.) is invalid.
 
-2. Contain `nodes` and `edges` arrays.
+Edges on a `condition` MUST preserve `sourceHandle` end-to-end. The frontend
+`onConnect` handler uses `addEdge` which preserves this automatically.
 
-3. Use supported node types.
+---
 
-4. Have unique, non-empty node and edge IDs.
+## 4. Structural validation rules
 
-5. Have finite numeric node positions.
+Backend (and optionally client) MUST enforce all of these. Invalid graphs
+return HTTP 400 with a clear, non-leaking error.
 
-6. Have matching `type` and `data.type`.
+1. `version === 1`.
+2. `nodes` and `edges` are arrays; each element is an object.
+3. Every node and edge has a unique, non-empty `id`.
+4. Every node has `type ∈ { trigger, task, condition }` and
+   `data.type === node.type`.
+5. `position.x` and `position.y` are finite numbers.
+6. Every `edge.source` and `edge.target` references an existing node id.
+7. Exactly one `trigger` node.
+8. Every `condition` node has at least one outgoing edge with
+   `sourceHandle === "true"` and at least one with `sourceHandle === "false"`.
+9. The graph is a **DAG** — no cycles.
+10. `sourceHandle` is required only on edges leaving a `condition` node
+    (and there it MUST be `"true"` or `"false"`).
+11. **Config-specific rules** (cron parses, IANA timezone, action
+    requirements, etc.) are documented above and implemented in the
+    backend validator only after this spec is finalised for the field set.
 
-7. Have non-empty node labels.
+> The graph body MUST NOT be used as an authorization source. Validation
+> errors MUST NOT leak internal details.
 
-8. Reference existing nodes from every edge.
+---
 
-9. Contain exactly one trigger.
+## 5. Persistence
 
-10. Have both true and false outgoing branches for every condition.
+Frontend hands the backend the shape in §1 verbatim:
 
-11. Contain no directed cycles.
+```http
+POST /workflows
+Content-Type: application/json
 
-## 5. Configuration Validation
+{ "version": 1, "nodes": [...], "edges": [...] }
+```
 
-The complete configuration schema for trigger, task, and condition nodes has not been located in the inspected files. Do not invent configuration fields.
+The canvas does not maintain its own "API payload" representation. There is
+one source of truth: the React Flow graph.
 
-Cron parsing and IANA timezone validation must follow the team's confirmed specification.
+---
 
-## 6. Current Backend Gaps
+## 6. Execution spec projection (run time only)
 
-The inspected backend validator checks arrays, identifiers, supported node types, matching node data types, labels, finite positions, edge endpoints, supplied condition source handles, and directed cycles.
+The execution engine projects an `ExecutionSpec` from the validated graph at
+run time. It is **not** part of the stored shape and is not produced by
+the frontend.
 
-It does not currently enforce:
+```ts
+interface ExecutionStep {
+  nodeId: string;
+  type: "trigger" | "task" | "condition";
+  payload: WorkflowNodeData;
+  next: Array<{ branch: "true" | "false" | "default"; target: string }>;
+}
 
-- Graph version `1`
+interface ExecutionSpec {
+  entryNodeId: string;
+  steps: ExecutionStep[];
+}
+```
 
-- Exactly one trigger
+---
 
-- Both condition branches
+## 7. Change control
 
-- Node-specific configuration validation
-
-These are gaps between the agreed contract and the inspected implementation, not claims that validation is complete. Coordinate implementation changes with the backend owner.
-
-## 7. Save and Security
-
-The frontend should validate the graph before Save and provide clear error feedback. The backend must validate independently before persistence or execution.
-
-Tenant authorization must come from trusted server-side authentication context, never from graph data or a client-supplied tenant ID.
-
-The exact save endpoint and response format must follow the team's agreed API contract.
-
-## 8. Pending Confirmation
-
-- Complete configuration schemas for each node type
-
-- Applicable cron and timezone requirements
-
-- Whether `targetHandle` and edge `data` are required
-
-- Alignment of frontend and backend graph types
-
-- Final validation error-response format
-
-
+- Any change to this file is breaking. Bump `version` in §1 in the same PR.
+- Add new validation rules under §4 with explicit test fixtures.
+- Add new config variants to §2 with full TypeScript definitions; do not
+  introduce `Record<string, unknown>` placeholders without a tracked
+  follow-up.

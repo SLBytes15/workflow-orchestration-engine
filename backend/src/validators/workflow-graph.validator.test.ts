@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { validateWorkflowGraph } from "./workflow-graph.validator";
+import { version } from "node:os";
 
 function loadFixture(name: string): unknown {
   return JSON.parse(
@@ -12,6 +13,7 @@ function loadFixture(name: string): unknown {
 }
 
 const validGraph = {
+    version:1,
   nodes: [
     {
       id: "trigger-1",
@@ -210,4 +212,64 @@ test("all graph fixtures parse as JSON objects", () => {
     assert.equal(typeof fixture, "object", `${name} should contain a JSON object`);
     assert.ok(fixture !== null && !Array.isArray(fixture), `${name} should be an object`);
   }
+});
+
+test("rejects an unsupported graph version", () => {
+  const graph = structuredClone(validGraph);
+  graph.version = 2;
+
+  assert.ok(
+    validateWorkflowGraph(graph).some((error) =>
+      error.includes("version must be 1"),
+    ),
+  );
+});
+
+test("rejects a graph with no trigger", () => {
+  const graph = structuredClone(validGraph);
+  graph.nodes = graph.nodes.filter((node) => node.type !== "trigger");
+
+  assert.ok(
+    validateWorkflowGraph(graph).some((error) =>
+      error.includes("exactly one trigger"),
+    ),
+  );
+});
+
+test("rejects a graph with multiple triggers", () => {
+  const graph = structuredClone(validGraph);
+  graph.nodes.push({
+    id: "trigger-2",
+    type: "trigger",
+    position: { x: 800, y: 100 },
+    data: { type: "trigger", label: "Second trigger" },
+  });
+
+  assert.ok(
+    validateWorkflowGraph(graph).some((error) =>
+      error.includes("exactly one trigger"),
+    ),
+  );
+});
+
+test("rejects a condition missing its true branch", () => {
+  const graph = structuredClone(validGraph);
+  graph.edges = graph.edges.filter((edge) => edge.id !== "edge-2");
+
+  assert.ok(
+    validateWorkflowGraph(graph).some((error) =>
+      error.includes("missing its true branch"),
+    ),
+  );
+});
+
+test("rejects a condition missing its false branch", () => {
+  const graph = structuredClone(validGraph);
+  graph.edges = graph.edges.filter((edge) => edge.id !== "edge-3");
+
+  assert.ok(
+    validateWorkflowGraph(graph).some((error) =>
+      error.includes("missing its false branch"),
+    ),
+  );
 });

@@ -1,5 +1,3 @@
-
-
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { AddressInfo } from "node:net";
@@ -7,6 +5,7 @@ import type { Server } from "node:http";
 import express from "express";
 import { validateRequest } from "./validateRequest.middleware";
 import { validateCreateWorkflow } from "../validators/workflow.validator";
+import { validGraph } from "../validators/validGraph.fixture";
 
 let server: Server;
 let baseUrl: string;
@@ -59,7 +58,10 @@ describe("validateRequest middleware", () => {
       error: {
         code: "VALIDATION_ERROR",
         message: "Request validation failed",
-        details: ["name is required and must be a non-empty string"],
+        details: [
+          "name is required and must be a non-empty string",
+          "graph is required",
+        ],
       },
     });
   });
@@ -71,6 +73,7 @@ describe("validateRequest middleware", () => {
       body: JSON.stringify({
         name: "  Order Processing  ",
         description: "  Process an order  ",
+        graph: validGraph,
       }),
     });
 
@@ -79,6 +82,7 @@ describe("validateRequest middleware", () => {
       data: {
         name: "Order Processing",
         description: "Process an order",
+        graph: validGraph,
       },
     });
   });
@@ -89,6 +93,7 @@ describe("validateRequest middleware", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         name: "Order Processing",
+        graph: validGraph,
         status: "active",
       }),
     });
