@@ -9,12 +9,6 @@ export interface CreateWorkflowInput {
   graph: WorkflowGraph;
 }
 
-export interface ValidationResult<T = CreateWorkflowInput> {
-  valid: boolean;
-  errors: string[];
-  data?: T;
-}
-
 export interface CreateWorkflowInput {
   name: string;
   description?: string;

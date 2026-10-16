@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import { apiRateLimiter } from "./middleware/rateLimit.middleware";
 import { errorHandler } from "./middleware/errorHandler.middleware";
 import {
@@ -16,6 +17,14 @@ import workflowRoutes from "./routes/workflow.routes";
 const app = express();
 const tenantResolver = createTenantResolver();
 const requireTenantAuth = tenantAuthMiddleware(tenantResolver);
+
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "x-api-key"],
+  }),
+);
 
 app.use(express.json());
 

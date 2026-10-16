@@ -19,6 +19,33 @@ export function createWorkflowRouter(
   const router = Router();
   const requireTenantAuth = tenantAuthMiddleware(resolver);
 
+
+  router.get("/", requireTenantAuth, async (req, res, next) => {
+    try {
+      const tenantContext = req.tenantContext;
+
+      if (!tenantContext) {
+        res.status(401).json({
+          error: {
+            code: "UNAUTHORIZED",
+            message: "A valid API key is required",
+          },
+        });
+        return;
+      }
+
+      const workflows = await service.listWorkflows(tenantContext.tenantId);
+
+      res.status(200).json({
+        message: "Workflows retrieved successfully",
+        workflows,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+
   router.post(
     "/",
     requireTenantAuth,
