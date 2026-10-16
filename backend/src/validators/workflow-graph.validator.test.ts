@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { validateWorkflowGraph } from "./workflow-graph.validator";
+
+function loadFixture(name: string): unknown {
+  return JSON.parse(
+    readFileSync(resolve(__dirname, "../../../docs/fixtures", name), "utf8").replace(/^\uFEFF/, ""),
+  ) as unknown;
+}
 
 const validGraph = {
   nodes: [
@@ -151,3 +159,55 @@ test("rejects non-finite node positions", () => {
   );
 });
 
+test("accepts the valid condition graph fixture", () => {
+  assert.deepEqual(
+    validateWorkflowGraph(loadFixture("valid-condition-graph.json")),
+    [],
+  );
+});
+test("rejects the invalid cycle fixture", () => {
+  assert.ok(
+    validateWorkflowGraph(loadFixture("invalid-cycle.json")).some((error) =>
+      error.includes("directed cycles"),
+    ),
+  );
+});
+test("rejects the invalid edge endpoint fixture", () => {
+  assert.ok(
+    validateWorkflowGraph(loadFixture("invalid-edge-endpoint.json")).some((error) =>
+      error.includes("must reference an existing node"),
+    ),
+  );
+});
+test("rejects the duplicate IDs fixture", () => {
+  assert.ok(
+    validateWorkflowGraph(loadFixture("invalid-duplicate-ids.json")).some((error) =>
+      error.includes("must be unique"),
+    ),
+  );
+});
+test("rejects the malformed position fixture", () => {
+  assert.ok(
+    validateWorkflowGraph(loadFixture("invalid-malformed-position.json")).some((error) =>
+      error.includes("position.x"),
+    ),
+  );
+});
+test("all graph fixtures parse as JSON objects", () => {
+  const fixtures = [
+    "valid-condition-graph.json",
+    "invalid-missing-condition-branch.json",
+    "invalid-cycle.json",
+    "invalid-missing-trigger.json",
+    "invalid-multiple-triggers.json",
+    "invalid-edge-endpoint.json",
+    "invalid-duplicate-ids.json",
+    "invalid-version.json",
+    "invalid-malformed-position.json",
+  ];
+  for (const name of fixtures) {
+    const fixture = loadFixture(name);
+    assert.equal(typeof fixture, "object", `${name} should contain a JSON object`);
+    assert.ok(fixture !== null && !Array.isArray(fixture), `${name} should be an object`);
+  }
+});

@@ -1,0 +1,20 @@
+﻿{
+    "edges":  [
+
+              ],
+    "version":  2,
+    "nodes":  [
+                  {
+                      "position":  {
+                                       "y":  100,
+                                       "x":  100
+                                   },
+                      "data":  {
+                                   "type":  "trigger",
+                                   "label":  "Order created"
+                               },
+                      "id":  "trigger-1",
+                      "type":  "trigger"
+                  }
+              ]
+}
