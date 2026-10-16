@@ -1,31 +1,40 @@
+
 import './Sidebar.css'
 
 const menuItems = [
   'Dashboard',
   'Workflows',
+  'Node Preview',
   'Executions',
   'Settings',
 ]
 
-function Sidebar() {
+type SidebarProps = {
+  activePage: string
+  onNavigate: (page: string) => void
+}
+
+function Sidebar({ activePage, onNavigate }: SidebarProps) {
   return (
     <aside className="sidebar" aria-label="Main navigation">
       <h2 className="sidebar-title">Workflow App</h2>
 
-      <nav>
+      <nav aria-label="Main menu">
         <ul className="sidebar-menu">
           {menuItems.map((item) => (
             <li key={item}>
-              <a
-                href="#"
+              <button
+                type="button"
                 className={`sidebar-link ${
-                  item === 'Dashboard' ? 'active' : ''
+                  item === activePage ? 'active' : ''
                 }`}
-                aria-current={item === 'Dashboard' ? 'page' : undefined}
-                onClick={(event) => event.preventDefault()}
+                aria-current={
+                  item === activePage ? 'page' : undefined
+                }
+                onClick={() => onNavigate(item)}
               >
                 {item}
-              </a>
+              </button>
             </li>
           ))}
         </ul>

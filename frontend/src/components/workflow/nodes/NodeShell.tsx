@@ -1,17 +1,68 @@
-import { NODE_KIND_LABEL } from "./node.types";
-import type { WorkflowNodeType } from "./node.types";
+import { Handle, Position } from "@xyflow/react";
+import {
+  HANDLE,
+  NODE_KIND_LABEL,
+  type WorkflowNodeType,
+} from "./node.types";
 import "./node.css";
 
 interface NodeShellProps {
   kind: WorkflowNodeType;
   label: string;
+  selected?: boolean;
 }
 
-function NodeShell({ kind, label }: NodeShellProps) {
+function NodeShell({ kind, label, selected = false }: NodeShellProps) {
   return (
-    <div className={`workflow-node workflow-node--${kind}`}>
+    <div
+      className={`workflow-node workflow-node--${kind}${
+        selected ? " workflow-node--selected" : ""
+      }`}
+    >
+      {/*
+        Trigger nodes are entry points and have no target handle.
+        Task and condition nodes share the same target handle id.
+      */}
+      {kind !== "trigger" && (
+        <Handle
+          type="target"
+          position={Position.Top}
+          id={HANDLE.target}
+          className="workflow-node__handle"
+        />
+      )}
+
       <span className="workflow-node__kind">{NODE_KIND_LABEL[kind]}</span>
       <p className="workflow-node__label">{label}</p>
+
+      {kind === "condition" ? (
+        <>
+          {/*
+            Condition source handles are literally "true" and "false" per
+            the agreed contract. Both are required and must be preserved
+            as `edge.sourceHandle` on outgoing edges.
+          */}
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id={HANDLE.branchTrue}
+            className="workflow-node__handle workflow-node__handle--true"
+          />
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id={HANDLE.branchFalse}
+            className="workflow-node__handle workflow-node__handle--false"
+          />
+        </>
+      ) : (
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          id={HANDLE.source}
+          className="workflow-node__handle"
+        />
+      )}
     </div>
   );
 }

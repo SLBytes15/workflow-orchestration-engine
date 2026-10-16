@@ -1,0 +1,44 @@
+﻿{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "type": "trigger",
+      "position": { "x": 100, "y": 100 },
+      "data": { "type": "trigger", "label": "Order created" }
+    },
+    {
+      "id": "condition-1",
+      "type": "condition",
+      "position": { "x": 350, "y": 100 },
+      "data": { "type": "condition", "label": "Payment approved?" }
+    },
+    {
+      "id": "task-1",
+      "type": "task",
+      "position": { "x": 600, "y": 40 },
+      "data": { "type": "task", "label": "Confirm order" }
+    },
+    {
+      "id": "task-2",
+      "type": "task",
+      "position": { "x": 600, "y": 200 },
+      "data": { "type": "task", "label": "Reject order" }
+    }
+  ],
+  "edges": [
+    { "id": "edge-1", "source": "trigger-1", "target": "condition-1" },
+    {
+      "id": "edge-2",
+      "source": "condition-1",
+      "target": "task-1",
+      "sourceHandle": "true"
+    },
+    {
+      "id": "edge-3",
+      "source": "condition-1",
+      "target": "task-2",
+      "sourceHandle": "false"
+    }
+  ]
+}
