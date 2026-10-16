@@ -10,6 +10,7 @@ import WorkflowCard from '../components/workflows/WorkflowCard'
 import WorkflowListState from '../components/workflows/WorkflowListState'
 import {
   createWorkflow,
+  getWorkflows,
   type WorkflowGraph,
 } from '../api/workflowApi'
 import './WorkflowsPage.css'
@@ -17,7 +18,7 @@ import './WorkflowsPage.css'
 type WorkflowStatus = 'Active' | 'Draft' | 'Paused'
 
 type Workflow = {
-  id: number
+  id: string | number
   name: string
   description: string
   status: WorkflowStatus
@@ -88,19 +89,72 @@ function WorkflowsPage({
     window.setTimeout(() => createButtonRef.current?.focus(), 0)
   }, [isSaving])
 
-  const filteredWorkflows = workflows.filter((workflow) => {
-    const query = search.trim().toLowerCase()
+  // Load workflows saved in the backend.
+  useEffect(() => {
+    if (!tenantApiKey?.trim()) return
 
-    const matchesSearch =
-      workflow.name.toLowerCase().includes(query) ||
-      workflow.description.toLowerCase().includes(query)
+    let cancelled = false
 
-    const matchesStatus =
-      statusFilter === 'All' || workflow.status === statusFilter
+    async function loadWorkflows() {
+      try {
+        const result = await getWorkflows(tenantApiKey!)
 
-    return matchesSearch && matchesStatus
-  })
+        if (cancelled) return
 
+        const savedWorkflows: Workflow[] = result.workflows.map(
+          (item, index) => ({
+            id: String(
+              item.id ?? item._id ?? `saved-${index}`,
+            ),
+            name: item.name ?? 'Untitled workflow',
+            description:
+              item.description ?? 'No description provided.',
+            status:
+              item.status === 'Active' ||
+              item.status === 'Paused' ||
+              item.status === 'Draft'
+                ? item.status
+                : 'Draft',
+            version: item.version ?? 1,
+            updatedAt: item.updatedAt
+              ? String(item.updatedAt).slice(0, 10)
+              : new Date().toISOString().slice(0, 10),
+          }),
+        )
+
+        setWorkflows((current) => {
+          const merged = [...current]
+
+          for (const saved of savedWorkflows) {
+            const exists = merged.some(
+              (workflow) =>
+                workflow.name.toLowerCase() ===
+                saved.name.toLowerCase(),
+            )
+
+            if (!exists) {
+              merged.push(saved)
+            }
+          }
+
+          return merged
+        })
+      } catch (error) {
+        console.error(
+          'Unable to load saved workflows:',
+          error,
+        )
+      }
+    }
+
+    void loadWorkflows()
+
+    return () => {
+      cancelled = true
+    }
+  }, [tenantApiKey])
+
+  // Manage keyboard focus inside the create-workflow dialog.
   useEffect(() => {
     if (!isCreateOpen) return
 
@@ -143,9 +197,26 @@ function WorkflowsPage({
     document.addEventListener('keydown', handleModalKeyDown)
 
     return () => {
-      document.removeEventListener('keydown', handleModalKeyDown)
+      document.removeEventListener(
+        'keydown',
+        handleModalKeyDown,
+      )
     }
-  }, [isCreateOpen, isSaving, closeCreateModal])
+  }, [isCreateOpen, closeCreateModal])
+
+  const filteredWorkflows = workflows.filter((workflow) => {
+    const query = search.trim().toLowerCase()
+
+    const matchesSearch =
+      workflow.name.toLowerCase().includes(query) ||
+      workflow.description.toLowerCase().includes(query)
+
+    const matchesStatus =
+      statusFilter === 'All' ||
+      workflow.status === statusFilter
+
+    return matchesSearch && matchesStatus
+  })
 
   async function handleCreateWorkflow(
     event: FormEvent<HTMLFormElement>,
@@ -167,11 +238,14 @@ function WorkflowsPage({
 
     const duplicate = workflows.some(
       (workflow) =>
-        workflow.name.toLowerCase() === trimmedName.toLowerCase(),
+        workflow.name.toLowerCase() ===
+        trimmedName.toLowerCase(),
     )
 
     if (duplicate) {
-      setNameError('A workflow with this name already exists.')
+      setNameError(
+        'A workflow with this name already exists.',
+      )
       return
     }
 
@@ -212,20 +286,40 @@ function WorkflowsPage({
       }
 
       const newWorkflow: Workflow = {
-        id: Date.now(),
+        id: String(
+          savedWorkflow.id ??
+            savedWorkflow._id ??
+            `created-${Date.now()}`,
+        ),
         name: savedWorkflow.name ?? trimmedName,
         description:
           savedWorkflow.description ??
           trimmedDescription ??
           'No description provided.',
-        status: savedWorkflow.status ?? 'Draft',
+        status:
+          savedWorkflow.status === 'Active' ||
+          savedWorkflow.status === 'Paused' ||
+          savedWorkflow.status === 'Draft'
+            ? savedWorkflow.status
+            : 'Draft',
         version: savedWorkflow.version ?? 1,
         updatedAt: savedWorkflow.updatedAt
           ? String(savedWorkflow.updatedAt).slice(0, 10)
           : new Date().toISOString().slice(0, 10),
       }
 
-      setWorkflows((current) => [...current, newWorkflow])
+      setWorkflows((current) => {
+        const alreadyExists = current.some(
+          (workflow) =>
+            workflow.name.toLowerCase() ===
+            newWorkflow.name.toLowerCase(),
+        )
+
+        if (alreadyExists) return current
+
+        return [...current, newWorkflow]
+      })
+
       setSearch('')
       setStatusFilter('All')
       setIsCreateOpen(false)
@@ -234,7 +328,10 @@ function WorkflowsPage({
       setNameError('')
       setApiError('')
 
-      window.setTimeout(() => createButtonRef.current?.focus(), 0)
+      window.setTimeout(
+        () => createButtonRef.current?.focus(),
+        0,
+      )
     } catch (error) {
       setApiError(
         error instanceof Error
@@ -254,7 +351,9 @@ function WorkflowsPage({
             WORKFLOW MANAGEMENT
           </p>
           <h1>Workflows</h1>
-          <p>Build, search, and manage your workflow definitions.</p>
+          <p>
+            Build, search, and manage your workflow definitions.
+          </p>
         </div>
 
         <button
@@ -271,10 +370,10 @@ function WorkflowsPage({
       </header>
 
       <p className="workflows-page__demo-note">
-        Sample workflows are displayed for demonstration. Workflows
-        created through the form are added to this page only after the
-        backend confirms a successful save. Existing sample workflows
-        are not loaded from the backend.
+        Sample workflows are displayed for demonstration.
+        Workflows created through the form are added after the
+        backend confirms a successful save. Saved workflows are
+        loaded from the backend when authentication is configured.
       </p>
 
       <p className="workflows-page__note" role="status">
@@ -285,22 +384,30 @@ function WorkflowsPage({
 
       <div className="workflows-page__filters">
         <div className="workflows-page__search-field">
-          <label htmlFor="workflow-search">Search workflows</label>
+          <label htmlFor="workflow-search">
+            Search workflows
+          </label>
           <input
             id="workflow-search"
             type="search"
             placeholder="Search by name or description..."
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) =>
+              setSearch(event.target.value)
+            }
           />
         </div>
 
         <div className="workflows-page__status-field">
-          <label htmlFor="workflow-status">Filter by status</label>
+          <label htmlFor="workflow-status">
+            Filter by status
+          </label>
           <select
             id="workflow-status"
             value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
+            onChange={(event) =>
+              setStatusFilter(event.target.value)
+            }
           >
             <option>All</option>
             <option>Active</option>
@@ -316,11 +423,16 @@ function WorkflowsPage({
       </div>
 
       {workflows.length === 0 ? (
-        <WorkflowListState loading={false} hasWorkflows={false} />
+        <WorkflowListState
+          loading={false}
+          hasWorkflows={false}
+        />
       ) : filteredWorkflows.length === 0 ? (
         <div className="workflows-page__empty" role="status">
           <h2>No matching workflows</h2>
-          <p>Try another search term or change the status filter.</p>
+          <p>
+            Try another search term or change the status filter.
+          </p>
           <button
             type="button"
             className="workflows-page__secondary"
@@ -371,9 +483,12 @@ function WorkflowsPage({
                 <p className="workflows-page__eyebrow">
                   NEW DEFINITION
                 </p>
-                <h2 id="workflow-modal-title">Create workflow</h2>
+                <h2 id="workflow-modal-title">
+                  Create workflow
+                </h2>
                 <p>
-                  Give your workflow a name and an optional description.
+                  Give your workflow a name and an optional
+                  description.
                 </p>
               </div>
 
@@ -412,7 +527,9 @@ function WorkflowsPage({
                   placeholder="e.g. Payment Processing"
                   aria-invalid={Boolean(nameError)}
                   aria-describedby={
-                    nameError ? 'workflow-name-error' : undefined
+                    nameError
+                      ? 'workflow-name-error'
+                      : undefined
                   }
                   autoFocus
                   disabled={isSaving}
@@ -453,7 +570,10 @@ function WorkflowsPage({
               </div>
 
               {apiError && (
-                <p className="workflows-page__error" role="alert">
+                <p
+                  className="workflows-page__error"
+                  role="alert"
+                >
                   {apiError}
                 </p>
               )}
@@ -478,8 +598,9 @@ function WorkflowsPage({
               </div>
 
               <p className="workflows-page__note">
-                New workflows start in Draft status. Saving requires a
-                valid graph and approved API authentication.
+                New workflows start in Draft status. Saving
+                requires a valid graph and approved API
+                authentication.
               </p>
             </form>
           </section>

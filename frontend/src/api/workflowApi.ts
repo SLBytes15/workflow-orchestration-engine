@@ -27,11 +27,66 @@ export type CreateWorkflowRequest = {
   graph: WorkflowGraph
 }
 
+export type CreatedWorkflow = {
+  id?: string
+  _id?: string
+  name?: string
+  description?: string
+  status?: string
+  version?: number
+  updatedAt?: string
+  [key: string]: unknown
+}
+
+export type CreateWorkflowResponse = {
+  message: string
+  workflow: CreatedWorkflow
+}
+
+export type ListWorkflowsResponse = {
+  message: string
+  workflows: CreatedWorkflow[]
+}
+
+type WorkflowApiErrorResponse = {
+  error?: {
+    code?: string
+    message?: string
+    details?: string[]
+  }
+}
+
+function getApiBaseUrl(): string {
+  return (
+    import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
+  ).replace(/\/+$/, '')
+}
+
+function getApiErrorMessage(
+  result: WorkflowApiErrorResponse | null,
+  status: number,
+): string {
+  const details = result?.error?.details
+
+  if (Array.isArray(details) && details.length > 0) {
+    return details.join('\n')
+  }
+
+  return (
+    result?.error?.message ??
+    `Workflow API request failed (HTTP ${status})`
+  )
+}
+
 export async function createWorkflow(
   input: CreateWorkflowRequest,
   tenantApiKey: string,
-) {
-  const response = await fetch('http://localhost:3000/api/workflows', {
+): Promise<CreateWorkflowResponse> {
+  if (!tenantApiKey.trim()) {
+    throw new Error('API authentication is not configured.')
+  }
+
+  const response = await fetch(`${getApiBaseUrl()}/api/workflows`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -40,20 +95,38 @@ export async function createWorkflow(
     body: JSON.stringify(input),
   })
 
- if (!response.ok) {
-  const result = await response.json().catch(() => null)
+  if (!response.ok) {
+    const result = (await response
+      .json()
+      .catch(() => null)) as WorkflowApiErrorResponse | null
 
-  const details = result?.error?.details
-
-  if (Array.isArray(details) && details.length > 0) {
-    throw new Error(details.join('\n'))
+    throw new Error(getApiErrorMessage(result, response.status))
   }
 
-  throw new Error(
-    result?.error?.message ??
-      `Create workflow failed (HTTP ${response.status})`,
-  )
+  return (await response.json()) as CreateWorkflowResponse
 }
 
-  return response.json()
+export async function getWorkflows(
+  tenantApiKey: string,
+): Promise<ListWorkflowsResponse> {
+  if (!tenantApiKey.trim()) {
+    throw new Error('API authentication is not configured.')
+  }
+
+  const response = await fetch(`${getApiBaseUrl()}/api/workflows`, {
+    method: 'GET',
+    headers: {
+      'X-API-Key': tenantApiKey,
+    },
+  })
+
+  if (!response.ok) {
+    const result = (await response
+      .json()
+      .catch(() => null)) as WorkflowApiErrorResponse | null
+
+    throw new Error(getApiErrorMessage(result, response.status))
+  }
+
+  return (await response.json()) as ListWorkflowsResponse
 }

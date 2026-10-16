@@ -18,6 +18,8 @@ function App() {
   const [workflowGraph, setWorkflowGraph] =
     useState<WorkflowGraph | null>(null)
 
+  const tenantApiKey = import.meta.env.VITE_API_KEY
+
   return (
     <div className="app-layout">
       <Sidebar
@@ -30,12 +32,18 @@ function App() {
           <>
             <h1>Dashboard</h1>
             <p>Welcome to the Workflow App.</p>
-            <WorkflowsPage graph={workflowGraph} />
+            <WorkflowsPage
+              graph={workflowGraph}
+              tenantApiKey={tenantApiKey}
+            />
           </>
         )}
 
         {activePage === 'Workflows' && (
-          <WorkflowsPage graph={workflowGraph} />
+          <WorkflowsPage
+            graph={workflowGraph}
+            tenantApiKey={tenantApiKey}
+          />
         )}
 
         {activePage === 'Node Preview' && (
@@ -53,7 +61,6 @@ function App() {
           <section>
             <h1>Executions</h1>
             <p>Track and monitor your workflow runs.</p>
-
             <div className="workflow-card">
               <h3>Execution History</h3>
               <p>No executions available yet.</p>
@@ -65,13 +72,11 @@ function App() {
           <section>
             <h1>Settings</h1>
             <p>Manage your workflow application preferences.</p>
-
             <div className="workflow-card">
               <h3>General Settings</h3>
               <p>Application: Workflow App</p>
               <p>Environment: Development</p>
             </div>
-
             <div className="workflow-card">
               <h3>Notifications</h3>
               <p>Notification preferences are not available yet.</p>
