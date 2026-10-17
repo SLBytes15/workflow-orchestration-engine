@@ -4,6 +4,9 @@ import TenantModel from "./tenant.model";
 import WorkflowModel from "./workflow.model";
 import { validGraph } from "../validators/validGraph.fixture";
 
+import WorkflowExecutionModel from "./WorkflowExecution";
+
+
 describe("Tenant schema", () => {
   it("requires name and slug", async () => {
     const tenant = new TenantModel({});
@@ -83,5 +86,108 @@ describe("Workflow schema", () => {
 
   it("enables timestamps", () => {
     assert.equal(WorkflowModel.schema.options.timestamps, true);
+  });
+});
+
+
+describe("WorkflowExecution schema", () => {
+  const validExecution = () => ({
+    tenantId: "507f1f77bcf86cd799439011",
+    workflowId: "507f1f77bcf86cd799439012",
+    workflowVersion: 1,
+    graphSnapshot: {
+      version: 1,
+      nodes: [],
+      edges: [],
+    },
+  });
+
+  it("requires tenantId, workflowId, workflowVersion, and graphSnapshot", async () => {
+    const execution = new WorkflowExecutionModel({});
+
+    await assert.rejects(execution.validate(), (error: unknown) => {
+      const validationError = error as {
+        errors?: Record<string, unknown>;
+      };
+
+      return Boolean(
+        validationError.errors?.tenantId &&
+        validationError.errors?.workflowId &&
+        validationError.errors?.workflowVersion &&
+        validationError.errors?.graphSnapshot,
+      );
+    });
+  });
+
+  it("uses ObjectId references for tenantId and workflowId", () => {
+    const tenantIdPath = WorkflowExecutionModel.schema.path("tenantId");
+    const workflowIdPath = WorkflowExecutionModel.schema.path("workflowId");
+
+    assert.equal(tenantIdPath.instance, "ObjectId");
+    assert.equal(tenantIdPath.options.ref, "Tenant");
+
+    assert.equal(workflowIdPath.instance, "ObjectId");
+    assert.equal(workflowIdPath.options.ref, "Workflow");
+  });
+
+  it("defaults status to queued and initializes execution fields", () => {
+    const execution = new WorkflowExecutionModel(validExecution());
+
+    assert.equal(execution.status, "queued");
+    assert.equal(execution.currentNodeId, null);
+    assert.deepEqual(execution.nodeResults, []);
+    assert.equal(execution.error, null);
+    assert.equal(execution.startedAt, null);
+    assert.equal(execution.completedAt, null);
+  });
+
+  it("accepts the supported execution statuses", async () => {
+    for (const status of ["queued", "running", "completed", "failed"]) {
+      const execution = new WorkflowExecutionModel({
+        ...validExecution(),
+        status,
+      });
+
+      await assert.doesNotReject(execution.validate());
+    }
+  });
+
+  it("rejects an unsupported execution status", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      status: "cancelled",
+    });
+
+    await assert.rejects(execution.validate());
+  });
+
+  it("rejects a workflow version below one", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      workflowVersion: 0,
+    });
+
+    await assert.rejects(execution.validate());
+  });
+
+  it("enables timestamps", () => {
+    assert.equal(WorkflowExecutionModel.schema.options.timestamps, true);
+  });
+
+  it("declares tenant-scoped query indexes", () => {
+    const indexes = WorkflowExecutionModel.schema.indexes();
+
+    assert.ok(
+      indexes.some(
+        ([fields]) =>
+          fields.tenantId === 1 &&
+          fields.workflowId === 1 &&
+          fields.createdAt === -1,
+      ),
+    );
+
+    assert.ok(
+      indexes.some(([fields]) => fields.tenantId === 1 && fields._id === 1),
+    );
   });
 });
