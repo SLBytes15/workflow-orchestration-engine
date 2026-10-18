@@ -1,0 +1,291 @@
+
+import assert from "node:assert/strict";
+import { after, before, test } from "node:test";
+import express from "express";
+import type { Server } from "node:http";
+import { Types } from "mongoose";
+
+import { errorHandler } from "../middleware/errorHandler.middleware";
+import type { TenantResolver } from "../services/tenantResolver";
+import {
+  createExecutionRouter,
+} from "./execution.routes";
+import { ExecutionServiceError } from "../services/execution.service";
+
+const tenantId = new Types.ObjectId();
+const executionId = new Types.ObjectId();
+const workflowId = new Types.ObjectId();
+
+let server: Server;
+let baseUrl: string;
+let receivedTenantId: string | undefined;
+let receivedWorkflowId: string | undefined;
+let receivedExecutionId: string | undefined;
+let receivedLimit: unknown;
+let receivedCursor: unknown;
+let mode: "normal" | "queue-error" | "not-found" = "normal";
+
+const resolver: TenantResolver = {
+  async resolverTenant(apiKey: string) {
+    if (apiKey !== "valid-test-key") return null;
+
+    return {
+      tenantId,
+    } as NonNullable<
+      Awaited<ReturnType<TenantResolver["resolverTenant"]>>
+    >;
+  },
+};
+
+const execution = {
+  _id: executionId,
+  tenantId,
+  workflowId,
+  workflowVersion: 3,
+  status: "queued",
+  startedAt: null,
+  createdAt: new Date("2026-10-18T10:00:00.000Z"),
+};
+
+const service = {
+  async startExecution(tenant: Types.ObjectId, id: string) {
+    receivedTenantId = String(tenant);
+    receivedWorkflowId = id;
+
+    if (mode === "queue-error") {
+      throw new ExecutionServiceError(
+        503,
+        "EXECUTION_QUEUE_UNAVAILABLE",
+        "Workflow execution is temporarily unavailable",
+      );
+    }
+
+    if (mode === "not-found") {
+      throw new ExecutionServiceError(
+        404,
+        "WORKFLOW_NOT_FOUND",
+        "Workflow not found",
+      );
+    }
+
+    return execution;
+  },
+
+  async getExecution(tenant: Types.ObjectId, id: string) {
+    receivedTenantId = String(tenant);
+    receivedExecutionId = id;
+
+    if (mode === "not-found") {
+      throw new ExecutionServiceError(
+        404,
+        "EXECUTION_NOT_FOUND",
+        "Execution not found",
+      );
+    }
+
+    return execution;
+  },
+
+  async listExecutions(
+    tenant: Types.ObjectId,
+    id: string,
+    limit: unknown,
+    cursor: unknown,
+  ) {
+    receivedTenantId = String(tenant);
+    receivedWorkflowId = id;
+    receivedLimit = limit;
+    receivedCursor = cursor;
+
+    if (mode === "not-found") {
+      throw new ExecutionServiceError(
+        404,
+        "WORKFLOW_NOT_FOUND",
+        "Workflow not found",
+      );
+    }
+
+    return {
+      executions: [],
+      pagination: {
+        limit: limit === undefined ? 20 : Number(limit),
+        hasMore: false,
+        nextCursor: null,
+      },
+    };
+  },
+};
+
+before(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use("/api/workflows", createExecutionRouter(resolver, service as any));
+  app.use("/api/executions", createExecutionRouter(resolver, service as any));
+  app.use(errorHandler);
+
+  await new Promise<void>((resolve) => {
+    server = app.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+
+  if (!address || typeof address === "string") {
+    throw new Error("Could not determine test server address");
+  }
+
+  baseUrl = `http://127.0.0.1:${address.port}`;
+});
+
+after(async () => {
+  if (server) {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  }
+});
+
+function resetState() {
+  receivedTenantId = undefined;
+  receivedWorkflowId = undefined;
+  receivedExecutionId = undefined;
+  receivedLimit = undefined;
+  receivedCursor = undefined;
+  mode = "normal";
+}
+
+function authHeaders() {
+  return { "x-api-key": "valid-test-key" };
+}
+
+test("rejects execution requests without an API key", async () => {
+  const response = await fetch(
+    `${baseUrl}/api/executions/${executionId}`,
+  );
+
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "UNAUTHORIZED",
+      message: "A valid API key is required",
+    },
+  });
+});
+
+test("rejects execution requests with an invalid API key", async () => {
+  const response = await fetch(
+    `${baseUrl}/api/executions/${executionId}`,
+    { headers: { "x-api-key": "invalid-test-key" } },
+  );
+
+  assert.equal(response.status, 401);
+});
+
+test("starts an execution using the authenticated tenant", async () => {
+  resetState();
+
+  const response = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    { method: "POST", headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 202);
+  assert.equal(receivedTenantId, String(tenantId));
+  assert.equal(receivedWorkflowId, String(workflowId));
+
+  const body = await response.json();
+  assert.equal(body.execution.status, "queued");
+  assert.equal(body.execution.workflowVersion, 3);
+});
+
+test("returns 503 when the execution queue is unavailable", async () => {
+  resetState();
+  mode = "queue-error";
+
+  const response = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    { method: "POST", headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "EXECUTION_QUEUE_UNAVAILABLE",
+      message: "Workflow execution is temporarily unavailable",
+    },
+  });
+});
+
+test("returns a tenant-scoped execution by ID", async () => {
+  resetState();
+
+  const response = await fetch(
+    `${baseUrl}/api/executions/${executionId}`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedTenantId, String(tenantId));
+  assert.equal(receivedExecutionId, String(executionId));
+
+  const body = await response.json();
+  assert.equal(body.execution.status, "queued");
+});
+
+test("returns not-found for an unavailable execution", async () => {
+  resetState();
+  mode = "not-found";
+
+  const response = await fetch(
+    `${baseUrl}/api/executions/${executionId}`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "EXECUTION_NOT_FOUND",
+      message: "Execution not found",
+    },
+  });
+});
+
+test("passes history pagination parameters to the service", async () => {
+  resetState();
+
+  const cursor = new Types.ObjectId().toString();
+  const response = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions?limit=10&cursor=${cursor}`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedTenantId, String(tenantId));
+  assert.equal(receivedWorkflowId, String(workflowId));
+  assert.equal(receivedLimit, "10");
+  assert.equal(receivedCursor, cursor);
+
+  const body = await response.json();
+  assert.equal(body.pagination.limit, 10);
+  assert.equal(body.pagination.hasMore, false);
+});
+
+test("returns the service error for a missing workflow", async () => {
+  resetState();
+  mode = "not-found";
+
+  const response = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "WORKFLOW_NOT_FOUND",
+      message: "Workflow not found",
+    },
+  });
+});
