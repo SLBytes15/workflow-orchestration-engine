@@ -195,6 +195,39 @@ test("rejects the malformed position fixture", () => {
     ),
   );
 });
+
+test("rejects the missing condition branch fixture", () => {
+  assert.ok(
+    validateWorkflowGraph(
+      loadFixture("invalid-missing-condition-branch.json"),
+    ).some((error) => error.includes("missing its false branch")),
+  );
+});
+
+test("rejects the missing trigger fixture", () => {
+  assert.ok(
+    validateWorkflowGraph(loadFixture("invalid-missing-trigger.json")).some(
+      (error) => error.includes("exactly one trigger"),
+    ),
+  );
+});
+
+test("rejects the multiple triggers fixture", () => {
+  assert.ok(
+    validateWorkflowGraph(loadFixture("invalid-multiple-triggers.json")).some(
+      (error) => error.includes("exactly one trigger"),
+    ),
+  );
+});
+
+test("rejects the invalid version fixture", () => {
+  assert.ok(
+    validateWorkflowGraph(loadFixture("invalid-version.json")).some((error) =>
+      error.includes("version must be 1"),
+    ),
+  );
+});
+
 test("all graph fixtures parse as JSON objects", () => {
   const fixtures = [
     "valid-condition-graph.json",
