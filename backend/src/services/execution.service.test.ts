@@ -177,3 +177,52 @@ test("paginates history and returns a cursor when more records exist", async () 
     "000000000000000000000002",
   );
 });
+
+
+test("rejects an invalid history cursor", async () => {
+  const service = createExecutionService(makeDependencies());
+
+  await assert.rejects(
+    service.listExecutions(
+      tenantId,
+      String(workflowId),
+      20,
+      "not-an-object-id",
+    ),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+});
+
+test("rejects fractional history limits", async () => {
+  const service = createExecutionService(makeDependencies());
+
+  await assert.rejects(
+    service.listExecutions(tenantId, String(workflowId), 1.5, undefined),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+});
+
+test("returns no next cursor when history has no additional records", async () => {
+  const service = createExecutionService(
+    makeDependencies({
+      findHistory: async () => [{ _id: executionId }],
+    }),
+  );
+
+  const result = await service.listExecutions(
+    tenantId,
+    String(workflowId),
+    2,
+    undefined,
+  );
+
+  assert.equal(result.executions.length, 1);
+  assert.equal(result.pagination.hasMore, false);
+  assert.equal(result.pagination.nextCursor, null);
+});

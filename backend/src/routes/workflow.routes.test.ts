@@ -14,6 +14,9 @@ const tenantId = new Types.ObjectId();
 let server: Server;
 let baseUrl: string;
 
+const createWorkflowCalls: unknown[] = [];
+const listedTenantIds: Types.ObjectId[] = [];
+
 const resolver: TenantResolver = {
   async resolverTenant(apiKey: string) {
     if (apiKey !== "valid-test-key") {
@@ -44,6 +47,8 @@ const service = {
     tenantId: Types.ObjectId;
     input: { name: string; description?: string; graph: typeof validGraph };
   }) {
+    createWorkflowCalls.push(command);
+
     return {
       ...createdWorkflow,
       tenantId: command.tenantId,
@@ -53,7 +58,8 @@ const service = {
     };
   },
 
-  async listWorkflows() {
+  async listWorkflows(requestedTenantId: Types.ObjectId) {
+    listedTenantIds.push(requestedTenantId);
     return [];
   },
 };
@@ -112,6 +118,8 @@ test("rejects an unresolved API key", async () => {
 });
 
 test("creates a workflow using the trusted tenant context", async () => {
+  const callsBefore = createWorkflowCalls.length;
+
   const response = await fetch(baseUrl, {
     method: "POST",
     headers: {
@@ -141,7 +149,15 @@ test("creates a workflow using the trusted tenant context", async () => {
   assert.equal(body.workflow.name, "Demo workflow");
   assert.equal(body.workflow.status, "draft");
   assert.equal(body.workflow.version, 1);
-  assert.deepEqual(body.workflow.graph, validGraph)
+  assert.deepEqual(body.workflow.graph, validGraph);
+
+  assert.equal(createWorkflowCalls.length, callsBefore + 1);
+
+  const lastCall = createWorkflowCalls[createWorkflowCalls.length - 1] as {
+    tenantId: Types.ObjectId;
+  };
+
+  assert.equal(lastCall.tenantId.toString(), tenantId.toString());
 });
 
 test("rejects client-supplied tenantId, status, and version", async () => {
@@ -155,6 +171,8 @@ test("rejects client-supplied tenantId, status, and version", async () => {
     { name: "Demo workflow", graph: validGraph, version: 99 },
   ];
 
+  const callsBefore = createWorkflowCalls.length;
+
   for (const payload of cases) {
     const response = await fetch(baseUrl, {
       method: "POST",
@@ -167,6 +185,35 @@ test("rejects client-supplied tenantId, status, and version", async () => {
 
     assert.equal(response.status, 400);
   }
+
+  assert.equal(
+    createWorkflowCalls.length,
+    callsBefore,
+    "Invalid requests must not reach the workflow service",
+  );
+});
+
+test("lists workflows using the trusted tenant even when a tenantId query is supplied", async () => {
+  const attackerTenantId = new Types.ObjectId();
+  const callsBefore = listedTenantIds.length;
+
+  const response = await fetch(
+    `${baseUrl}?tenantId=${attackerTenantId.toString()}`,
+    {
+      headers: { "x-api-key": "valid-test-key" },
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(listedTenantIds.length, callsBefore + 1);
+
+  const lastListedTenantId = listedTenantIds[listedTenantIds.length - 1];
+
+  assert.equal(lastListedTenantId.toString(), tenantId.toString());
+  assert.notEqual(
+    lastListedTenantId.toString(),
+    attackerTenantId.toString(),
+  );
 });
 
 test("rejects a blank workflow name", async () => {
