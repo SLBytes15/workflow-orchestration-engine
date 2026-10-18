@@ -102,6 +102,24 @@ describe("WorkflowExecution schema", () => {
     },
   });
 
+  it("rejects a null graphSnapshot", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      graphSnapshot: null,
+    });
+
+    await assert.rejects(
+      execution.validate(),
+      (error: unknown) => {
+        const validationError = error as {
+          errors?: Record<string, unknown>;
+        };
+
+        return Boolean(validationError.errors?.graphSnapshot);
+      },
+    );
+  });
+
   it("requires tenantId, workflowId, workflowVersion, and graphSnapshot", async () => {
     const execution = new WorkflowExecutionModel({});
 
