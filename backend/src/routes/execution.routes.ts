@@ -21,18 +21,29 @@ export function createExecutionRouter(
         return;
       }
 
-      const execution = await service.startExecution(tenant.tenantId, String(req.params.workflowId));
-      res.status(202).json({
-        message: "Workflow execution queued",
-        execution: {
-          id: String(execution._id),
-          workflowId: String(execution.workflowId),
-          workflowVersion: execution.workflowVersion,
-          status: execution.status,
-          startedAt: execution.startedAt ?? null,
-          createdAt: execution.createdAt,
-        },
-      });
+     const execution = await service.startExecution(
+       tenant.tenantId,
+       String(req.params.workflowId),
+     );
+
+     res.status(200).json({
+       message:
+         execution.status === "completed"
+           ? "Workflow execution completed"
+           : "Workflow execution failed",
+       execution: {
+         id: String(execution._id),
+         workflowId: String(execution.workflowId),
+         workflowVersion: execution.workflowVersion,
+         status: execution.status,
+         currentNodeId: execution.currentNodeId ?? null,
+         nodeResults: execution.nodeResults ?? [],
+         error: execution.error ?? null,
+         startedAt: execution.startedAt ?? null,
+         completedAt: execution.completedAt ?? null,
+         createdAt: execution.createdAt,
+       },
+     });
     } catch (error) {
       next(error);
     }

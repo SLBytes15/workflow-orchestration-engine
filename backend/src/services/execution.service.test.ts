@@ -16,7 +16,18 @@ const workflow = {
   _id: workflowId,
   tenantId,
   version: 3,
-  graph: { nodes: [], edges: [] },
+  graph: {
+    version: 1 as const,
+    nodes: [
+      {
+        id: "trigger-1",
+        type: "trigger" as const,
+        position: { x: 0, y: 0 },
+        data: { type: "trigger" as const, label: "Start" },
+      },
+    ],
+    edges: [],
+  },
 };
 
 function makeDependencies(
@@ -29,75 +40,124 @@ function makeDependencies(
       _id: executionId,
       createdAt: new Date("2026-10-17T12:00:00.000Z"),
     }),
-    deleteExecution: async () => ({ deletedCount: 1 }),
-    enqueueExecution: async () => true,
+    updateExecution: async (_tenant, _id, _expectedStatus, update) => ({
+      _id: executionId,
+      tenantId,
+      workflowId,
+      workflowVersion: 3,
+      graphSnapshot: workflow.graph,
+      ...update,
+    }),
     findExecution: async () => ({ _id: executionId, tenantId }),
     findHistory: async () => [],
     ...overrides,
   };
 }
 
-test("creates an execution snapshot for the trusted tenant", async () => {
-  let receivedTenant: Types.ObjectId | undefined;
-  let savedRecord: Record<string, unknown> | undefined;
+test("executes and persists the final execution for the trusted tenant", async () => {
+  const updates: Array<{
+    tenant: Types.ObjectId;
+    id: Types.ObjectId;
+    expectedStatus: string;
+    update: Record<string, unknown>;
+  }> = [];
 
-  const service = createExecutionService(makeDependencies({
-    findWorkflow: async (tenant, id) => {
-      receivedTenant = tenant;
-      assert.equal(String(id), String(workflowId));
-      return workflow;
-    },
-    createExecution: async (record) => {
-      savedRecord = record;
-      return { ...record, _id: executionId, createdAt: new Date() };
-    },
-  }));
+  const service = createExecutionService(
+    makeDependencies({
+      updateExecution: async (tenant, id, expectedStatus, update) => {
+        updates.push({
+          tenant,
+          id,
+          expectedStatus,
+          update: update as Record<string, unknown>,
+        });
+
+        return {
+          _id: executionId,
+          tenantId: tenant,
+          workflowId,
+          workflowVersion: 3,
+          graphSnapshot: workflow.graph,
+          ...update,
+        };
+      },
+    }),
+  );
 
   const result = await service.startExecution(tenantId, String(workflowId));
 
-  assert.equal(String(receivedTenant), String(tenantId));
-  assert.equal(result.status, "queued");
+  assert.equal(String(result.tenantId), String(tenantId));
+  assert.equal(result.status, "completed");
   assert.equal(result.workflowVersion, 3);
-  assert.deepEqual(savedRecord?.graphSnapshot, workflow.graph);
+  assert.deepEqual(result.nodeResults, [
+    { nodeId: "trigger-1", status: "completed" },
+  ]);
+
+  assert.equal(updates.length, 2);
+  assert.equal(updates[0].expectedStatus, "queued");
+  assert.equal(updates[0].update.status, "running");
+  assert.equal(updates[1].expectedStatus, "running");
+  assert.equal(updates[1].update.status, "completed");
+
+  for (const update of updates) {
+    assert.equal(String(update.tenant), String(tenantId));
+    assert.equal(String(update.id), String(executionId));
+  }
 });
 
-test("returns 503 and removes the record when no queue accepts it", async () => {
-  let deleted = false;
 
-  const service = createExecutionService(makeDependencies({
-    enqueueExecution: async () => false,
-    deleteExecution: async (tenant, id) => {
-      assert.equal(String(tenant), String(tenantId));
-      assert.equal(String(id), String(executionId));
-      deleted = true;
-      return { deletedCount: 1 };
-    },
-  }));
+test("persists a failed execution when the graph is invalid", async () => {
+  const invalidWorkflow = {
+    ...workflow,
+    graph: { version: 1 as const, nodes: [], edges: [] },
+  };
 
-  await assert.rejects(
-    service.startExecution(tenantId, String(workflowId)),
-    (error: unknown) =>
-      error instanceof ExecutionServiceError &&
-      error.statusCode === 503 &&
-      error.code === "EXECUTION_QUEUE_UNAVAILABLE",
+  const updates: Array<Record<string, unknown>> = [];
+
+  const service = createExecutionService(
+    makeDependencies({
+      findWorkflow: async () => invalidWorkflow,
+      updateExecution: async (_tenant, _id, _expectedStatus, update) => {
+        updates.push(update as Record<string, unknown>);
+
+        return {
+          _id: executionId,
+          tenantId,
+          workflowId,
+          workflowVersion: 3,
+          graphSnapshot: invalidWorkflow.graph,
+          ...update,
+        };
+      },
+    }),
   );
 
-  assert.equal(deleted, true);
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.equal(result.status, "failed");
+  assert.equal((result.error as { code: string }).code, "INVALID_GRAPH");
+  assert.ok(result.completedAt);
+
+  assert.equal(updates.length, 2);
+  assert.equal(updates[0].status, "running");
+  assert.equal(updates[1].status, "failed");
 });
 
 test("does not create an execution for a workflow outside the tenant scope", async () => {
   let created = false;
 
-  const service = createExecutionService(makeDependencies({
-    findWorkflow: async (tenant) => {
-      assert.equal(String(tenant), String(otherTenantId));
-      return null;
-    },
-    createExecution: async (record) => {
-      created = true;
-      return record;
-    },
-  }));
+  const service = createExecutionService(
+    makeDependencies({
+      findWorkflow: async (tenant) => {
+        assert.equal(String(tenant), String(otherTenantId));
+        return null;
+      },
+      createExecution: async (record) => {
+        created = true;
+        return record;
+      },
+    }),
+  );
 
   await assert.rejects(
     service.startExecution(otherTenantId, String(workflowId)),
@@ -110,14 +170,56 @@ test("does not create an execution for a workflow outside the tenant scope", asy
   assert.equal(created, false);
 });
 
+test("returns an error if the running state cannot be persisted", async () => {
+  const service = createExecutionService(
+    makeDependencies({
+      updateExecution: async () => null,
+    }),
+  );
+
+  await assert.rejects(
+    service.startExecution(tenantId, String(workflowId)),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 500 &&
+      error.code === "EXECUTION_STATE_UPDATE_FAILED",
+  );
+});
+
+test("returns an error if terminal results cannot be persisted", async () => {
+  let calls = 0;
+
+  const service = createExecutionService(
+    makeDependencies({
+      updateExecution: async (_tenant, _id, _expectedStatus, update) => {
+        calls += 1;
+        if (calls === 1) {
+          return { _id: executionId, status: "running" };
+        }
+        return null;
+      },
+    }),
+  );
+
+  await assert.rejects(
+    service.startExecution(tenantId, String(workflowId)),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 500 &&
+      error.code === "EXECUTION_RESULT_PERSISTENCE_FAILED",
+  );
+});
+
 test("scopes execution lookup to the supplied tenant", async () => {
-  const service = createExecutionService(makeDependencies({
-    findExecution: async (tenant, id) => {
-      assert.equal(String(tenant), String(otherTenantId));
-      assert.equal(String(id), String(executionId));
-      return null;
-    },
-  }));
+  const service = createExecutionService(
+    makeDependencies({
+      findExecution: async (tenant, id) => {
+        assert.equal(String(tenant), String(otherTenantId));
+        assert.equal(String(id), String(executionId));
+        return null;
+      },
+    }),
+  );
 
   await assert.rejects(
     service.getExecution(otherTenantId, String(executionId)),
@@ -134,15 +236,13 @@ test("rejects malformed IDs and invalid history limits", async () => {
   await assert.rejects(
     service.getExecution(tenantId, "not-an-id"),
     (error: unknown) =>
-      error instanceof ExecutionServiceError &&
-      error.statusCode === 400,
+      error instanceof ExecutionServiceError && error.statusCode === 400,
   );
 
   await assert.rejects(
     service.listExecutions(tenantId, String(workflowId), 101, undefined),
     (error: unknown) =>
-      error instanceof ExecutionServiceError &&
-      error.statusCode === 400,
+      error instanceof ExecutionServiceError && error.statusCode === 400,
   );
 });
 
@@ -153,15 +253,17 @@ test("paginates history and returns a cursor when more records exist", async () 
     { _id: new Types.ObjectId("000000000000000000000001") },
   ];
 
-  const service = createExecutionService(makeDependencies({
-    findHistory: async (tenant, id, limit, cursor) => {
-      assert.equal(String(tenant), String(tenantId));
-      assert.equal(String(id), String(workflowId));
-      assert.equal(limit, 2);
-      assert.equal(cursor, undefined);
-      return records;
-    },
-  }));
+  const service = createExecutionService(
+    makeDependencies({
+      findHistory: async (tenant, id, limit, cursor) => {
+        assert.equal(String(tenant), String(tenantId));
+        assert.equal(String(id), String(workflowId));
+        assert.equal(limit, 2);
+        assert.equal(cursor, undefined);
+        return records;
+      },
+    }),
+  );
 
   const result = await service.listExecutions(
     tenantId,
@@ -172,12 +274,8 @@ test("paginates history and returns a cursor when more records exist", async () 
 
   assert.equal(result.executions.length, 2);
   assert.equal(result.pagination.hasMore, true);
-  assert.equal(
-    result.pagination.nextCursor,
-    "000000000000000000000002",
-  );
+  assert.equal(result.pagination.nextCursor, "000000000000000000000002");
 });
-
 
 test("rejects an invalid history cursor", async () => {
   const service = createExecutionService(makeDependencies());
