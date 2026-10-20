@@ -1,6 +1,7 @@
 
 import { useState } from 'react'
 import WorkflowsPage from './pages/WorkflowsPage'
+import ExecutionsPage from './pages/ExecutionsPage'
 import Sidebar from './components/layout/Sidebar'
 import NodePreview from './components/workflow/nodes/NodePreview'
 import type { WorkflowGraph } from './api/workflowApi'
@@ -56,16 +57,8 @@ function App() {
             </p>
           </>
         )}
-
         {activePage === 'Executions' && (
-          <section>
-            <h1>Executions</h1>
-            <p>Track and monitor your workflow runs.</p>
-            <div className="workflow-card">
-              <h3>Execution History</h3>
-              <p>No executions available yet.</p>
-            </div>
-          </section>
+          <ExecutionsPage tenantApiKey={tenantApiKey} />
         )}
 
         {activePage === 'Settings' && (
