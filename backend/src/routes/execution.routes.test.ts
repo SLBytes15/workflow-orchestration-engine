@@ -23,7 +23,10 @@ let receivedWorkflowId: string | undefined;
 let receivedExecutionId: string | undefined;
 let receivedLimit: unknown;
 let receivedCursor: unknown;
+
 let mode: "normal" | "execution-error" | "not-found" = "normal";
+
+
 
 const resolver: TenantResolver = {
   async resolverTenant(apiKey: string) {
@@ -57,6 +60,10 @@ const service = {
   async startExecution(tenant: Types.ObjectId, id: string) {
     receivedTenantId = String(tenant);
     receivedWorkflowId = id;
+    if (!/^[a-f\d]{24}$/i.test(id)) {
+      throw new ExecutionServiceError(400, "VALIDATION_ERROR", "Invalid workflow ID");
+    }
+
 
     if (mode === "execution-error") {
       throw new ExecutionServiceError(
@@ -80,6 +87,14 @@ const service = {
   async getExecution(tenant: Types.ObjectId, id: string) {
     receivedTenantId = String(tenant);
     receivedExecutionId = id;
+    if (!/^[a-f\d]{24}$/i.test(id)) {
+      throw new ExecutionServiceError(400, "VALIDATION_ERROR", "Invalid execution ID");
+    }
+
+    if (mode === "unexpected-error") {
+      throw new Error("private-db-secret internal stack details");
+    }
+
 
     if (mode === "not-found") {
       throw new ExecutionServiceError(
@@ -302,4 +317,57 @@ test("returns the service error for a missing workflow", async () => {
       message: "Workflow not found",
     },
   });
+});
+
+test("returns 400 for a malformed workflow ID", async () => {
+  resetState();
+  const response = await fetch(
+    `${baseUrl}/api/workflows/not-a-valid-id/executions`,
+    { method: "POST", headers: authHeaders() },
+  );
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "VALIDATION_ERROR");
+});
+
+test("returns 400 for a malformed execution ID", async () => {
+  resetState();
+  const response = await fetch(
+    `${baseUrl}/api/executions/not-a-valid-id`,
+    { headers: authHeaders() },
+  );
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "VALIDATION_ERROR");
+});
+
+test("does not trust a client-supplied tenantId", async () => {
+  resetState();
+  const response = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ tenantId: new Types.ObjectId().toString() }),
+    },
+  );
+  assert.equal(response.status, 202);
+  assert.equal(receivedTenantId, String(tenantId));
+});
+
+test("does not expose internal details for unexpected errors", async () => {
+  resetState();
+  mode = "unexpected-error";
+  const response = await fetch(
+    `${baseUrl}/api/executions/${executionId}`,
+    { headers: authHeaders() },
+  );
+  assert.equal(response.status, 500);
+  const body = await response.text();
+  assert.ok(!body.includes("private-db-secret"));
+  assert.ok(!body.includes("stack details"));
+  assert.ok(body.includes("INTERNAL_SERVER_ERROR"));
 });
