@@ -1,345 +1,371 @@
-
+import { startExecution, type WorkflowExecution } from "../api/executionApi";
 import {
   useCallback,
   useEffect,
   useRef,
   useState,
   type FormEvent,
-} from 'react'
-import WorkflowCard from '../components/workflows/WorkflowCard'
-import WorkflowListState from '../components/workflows/WorkflowListState'
+} from "react";
+import WorkflowCard from "../components/workflows/WorkflowCard";
+import WorkflowListState from "../components/workflows/WorkflowListState";
 import {
   createWorkflow,
   getWorkflows,
   type WorkflowGraph,
-} from '../api/workflowApi'
-import './WorkflowsPage.css'
+} from "../api/workflowApi";
+import "./WorkflowsPage.css";
 
-type WorkflowStatus = 'Active' | 'Draft' | 'Paused'
+type WorkflowStatus = "Active" | "Draft" | "Paused";
 
 type Workflow = {
-  id: string | number
-  name: string
-  description: string
-  status: WorkflowStatus
-  version: number
-  updatedAt: string
-}
+  id: string | number;
+  isPersisted: boolean;
+  name: string;
+  description: string;
+  status: WorkflowStatus;
+  version: number;
+  updatedAt: string;
+};
 
 type WorkflowsPageProps = {
-  graph: WorkflowGraph | null
-  tenantApiKey?: string
-}
+  graph: WorkflowGraph | null;
+  tenantApiKey?: string;
+};
 
 const initialWorkflows: Workflow[] = [
   {
     id: 1,
-    name: 'Payment Processing',
-    description: 'Handles payment-related workflow operations.',
-    status: 'Active',
+    isPersisted: false,
+    name: "Payment Processing",
+    description: "Handles payment-related workflow operations.",
+    status: "Active",
     version: 1,
-    updatedAt: '2026-10-10',
+    updatedAt: "2026-10-10",
   },
   {
     id: 2,
-    name: 'Order Management',
-    description: 'Manages order creation, tracking, and completion.',
-    status: 'Draft',
+    isPersisted: false,
+    name: "Order Management",
+    description: "Manages order creation, tracking, and completion.",
+    status: "Draft",
     version: 2,
-    updatedAt: '2026-10-09',
+    updatedAt: "2026-10-09",
   },
   {
     id: 3,
-    name: 'Customer Notifications',
-    description: 'Sends notifications to customers.',
-    status: 'Paused',
+    isPersisted: false,
+    name: "Customer Notifications",
+    description: "Sends notifications to customers.",
+    status: "Paused",
     version: 1,
-    updatedAt: '2026-10-08',
+    updatedAt: "2026-10-08",
   },
-]
+];
 
-function WorkflowsPage({
-  graph,
-  tenantApiKey,
-}: WorkflowsPageProps) {
-  const [workflows, setWorkflows] =
-    useState<Workflow[]>(initialWorkflows)
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('All')
-  const [isCreateOpen, setIsCreateOpen] = useState(false)
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [nameError, setNameError] = useState('')
-  const [apiError, setApiError] = useState('')
-  const [isSaving, setIsSaving] = useState(false)
+function WorkflowsPage({ graph, tenantApiKey }: WorkflowsPageProps) {
+  const [workflows, setWorkflows] = useState<Workflow[]>(initialWorkflows);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [apiError, setApiError] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
 
-  const createButtonRef = useRef<HTMLButtonElement>(null)
-  const modalRef = useRef<HTMLElement>(null)
-  const nameInputRef = useRef<HTMLInputElement>(null)
+  const [runningWorkflowId, setRunningWorkflowId] = useState<string | null>(
+    null,
+  );
+
+  const [executionMessage, setExecutionMessage] = useState("");
+  const [executionError, setExecutionError] = useState("");
+  const [lastExecution, setLastExecution] = useState<WorkflowExecution | null>(
+    null,
+  );
+
+
+  const createButtonRef = useRef<HTMLButtonElement>(null);
+  const modalRef = useRef<HTMLElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const closeCreateModal = useCallback(() => {
-    if (isSaving) return
+    if (isSaving) return;
 
-    setIsCreateOpen(false)
-    setName('')
-    setDescription('')
-    setNameError('')
-    setApiError('')
+    setIsCreateOpen(false);
+    setName("");
+    setDescription("");
+    setNameError("");
+    setApiError("");
 
-    window.setTimeout(() => createButtonRef.current?.focus(), 0)
-  }, [isSaving])
+    window.setTimeout(() => createButtonRef.current?.focus(), 0);
+  }, [isSaving]);
 
   // Load workflows saved in the backend.
   useEffect(() => {
-    if (!tenantApiKey?.trim()) return
+    if (!tenantApiKey?.trim()) return;
 
-    let cancelled = false
+    let cancelled = false;
 
     async function loadWorkflows() {
       try {
-        const result = await getWorkflows(tenantApiKey!)
+        const result = await getWorkflows(tenantApiKey!);
 
-        if (cancelled) return
+        if (cancelled) return;
 
         const savedWorkflows: Workflow[] = result.workflows.map(
           (item, index) => ({
-            id: String(
-              item.id ?? item._id ?? `saved-${index}`,
-            ),
-            name: item.name ?? 'Untitled workflow',
-            description:
-              item.description ?? 'No description provided.',
+            id: String(item.id ?? item._id ?? `saved-${index}`),
+            isPersisted: Boolean(item.id ?? item._id),
+            name: item.name ?? "Untitled workflow",
+            description: item.description ?? "No description provided.",
             status:
-              item.status === 'Active' ||
-              item.status === 'Paused' ||
-              item.status === 'Draft'
+              item.status === "Active" ||
+              item.status === "Paused" ||
+              item.status === "Draft"
                 ? item.status
-                : 'Draft',
+                : "Draft",
             version: item.version ?? 1,
             updatedAt: item.updatedAt
               ? String(item.updatedAt).slice(0, 10)
               : new Date().toISOString().slice(0, 10),
           }),
-        )
+        );
 
         setWorkflows((current) => {
-          const merged = [...current]
+          const savedNames = new Set(
+            savedWorkflows.map((workflow) => workflow.name.toLowerCase()),
+          );
 
-          for (const saved of savedWorkflows) {
-            const exists = merged.some(
-              (workflow) =>
-                workflow.name.toLowerCase() ===
-                saved.name.toLowerCase(),
-            )
+          const demosWithoutDuplicates = current.filter(
+            (workflow) =>
+              workflow.isPersisted ||
+              !savedNames.has(workflow.name.toLowerCase()),
+          );
 
-            if (!exists) {
-              merged.push(saved)
-            }
-          }
-
-          return merged
-        })
+          return [...demosWithoutDuplicates, ...savedWorkflows];
+        });
       } catch (error) {
-        console.error(
-          'Unable to load saved workflows:',
-          error,
-        )
+        console.error("Unable to load saved workflows:", error);
       }
     }
 
-    void loadWorkflows()
+    void loadWorkflows();
 
     return () => {
-      cancelled = true
-    }
-  }, [tenantApiKey])
+      cancelled = true;
+    };
+  }, [tenantApiKey]);
 
   // Manage keyboard focus inside the create-workflow dialog.
   useEffect(() => {
-    if (!isCreateOpen) return
+    if (!isCreateOpen) return;
 
-    nameInputRef.current?.focus()
+    nameInputRef.current?.focus();
 
     function handleModalKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        closeCreateModal()
-        return
+      if (event.key === "Escape") {
+        closeCreateModal();
+        return;
       }
 
-      if (event.key !== 'Tab' || !modalRef.current) return
+      if (event.key !== "Tab" || !modalRef.current) return;
 
-      const focusableElements =
-        modalRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        )
+      const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
 
-      if (focusableElements.length === 0) return
+      if (focusableElements.length === 0) return;
 
-      const firstElement = focusableElements[0]
-      const lastElement =
-        focusableElements[focusableElements.length - 1]
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
 
-      if (
-        event.shiftKey &&
-        document.activeElement === firstElement
-      ) {
-        event.preventDefault()
-        lastElement.focus()
-      } else if (
-        !event.shiftKey &&
-        document.activeElement === lastElement
-      ) {
-        event.preventDefault()
-        firstElement.focus()
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
       }
     }
 
-    document.addEventListener('keydown', handleModalKeyDown)
+    document.addEventListener("keydown", handleModalKeyDown);
 
     return () => {
-      document.removeEventListener(
-        'keydown',
-        handleModalKeyDown,
-      )
-    }
-  }, [isCreateOpen, closeCreateModal])
+      document.removeEventListener("keydown", handleModalKeyDown);
+    };
+  }, [isCreateOpen, closeCreateModal]);
 
   const filteredWorkflows = workflows.filter((workflow) => {
-    const query = search.trim().toLowerCase()
+    const query = search.trim().toLowerCase();
 
     const matchesSearch =
       workflow.name.toLowerCase().includes(query) ||
-      workflow.description.toLowerCase().includes(query)
+      workflow.description.toLowerCase().includes(query);
 
     const matchesStatus =
-      statusFilter === 'All' ||
-      workflow.status === statusFilter
+      statusFilter === "All" || workflow.status === statusFilter;
 
-    return matchesSearch && matchesStatus
-  })
+    return matchesSearch && matchesStatus;
+  });
 
-  async function handleCreateWorkflow(
-    event: FormEvent<HTMLFormElement>,
-  ) {
-    event.preventDefault()
+  async function handleCreateWorkflow(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
-    if (isSaving) return
+    if (isSaving) return;
 
-    const trimmedName = name.trim()
-    const trimmedDescription = description.trim()
+    const trimmedName = name.trim();
+    const trimmedDescription = description.trim();
 
-    setNameError('')
-    setApiError('')
+    setNameError("");
+    setApiError("");
 
     if (!trimmedName) {
-      setNameError('Please enter a workflow name.')
-      return
+      setNameError("Please enter a workflow name.");
+      return;
     }
 
     const duplicate = workflows.some(
-      (workflow) =>
-        workflow.name.toLowerCase() ===
-        trimmedName.toLowerCase(),
-    )
+      (workflow) => workflow.name.toLowerCase() === trimmedName.toLowerCase(),
+    );
 
     if (duplicate) {
-      setNameError(
-        'A workflow with this name already exists.',
-      )
-      return
+      setNameError("A workflow with this name already exists.");
+      return;
     }
 
     if (!graph) {
       setApiError(
-        'No workflow graph is available. Open Node Preview and prepare a graph before saving.',
-      )
-      return
+        "No workflow graph is available. Open Node Preview and prepare a graph before saving.",
+      );
+      return;
     }
 
     if (!tenantApiKey?.trim()) {
       setApiError(
-        'API authentication is not configured. Ask your team for the approved development API-key setup.',
-      )
-      return
+        "API authentication is not configured. Ask your team for the approved development API-key setup.",
+      );
+      return;
     }
 
-    setIsSaving(true)
+    setIsSaving(true);
 
     try {
       const result = await createWorkflow(
         {
           name: trimmedName,
-          ...(trimmedDescription
-            ? { description: trimmedDescription }
-            : {}),
+          ...(trimmedDescription ? { description: trimmedDescription } : {}),
           graph,
         },
         tenantApiKey,
-      )
+      );
 
-      const savedWorkflow = result?.workflow
+      const savedWorkflow = result?.workflow;
 
       if (!savedWorkflow) {
         throw new Error(
-          'The backend response did not contain a saved workflow. Please verify the API response.',
-        )
+          "The backend response did not contain a saved workflow. Please verify the API response.",
+        );
       }
 
       const newWorkflow: Workflow = {
         id: String(
-          savedWorkflow.id ??
-            savedWorkflow._id ??
-            `created-${Date.now()}`,
+          savedWorkflow.id ?? savedWorkflow._id ?? `created-${Date.now()}`,
         ),
+        isPersisted: Boolean(savedWorkflow.id ?? savedWorkflow._id),
         name: savedWorkflow.name ?? trimmedName,
         description:
           savedWorkflow.description ??
           trimmedDescription ??
-          'No description provided.',
+          "No description provided.",
         status:
-          savedWorkflow.status === 'Active' ||
-          savedWorkflow.status === 'Paused' ||
-          savedWorkflow.status === 'Draft'
+          savedWorkflow.status === "Active" ||
+          savedWorkflow.status === "Paused" ||
+          savedWorkflow.status === "Draft"
             ? savedWorkflow.status
-            : 'Draft',
+            : "Draft",
         version: savedWorkflow.version ?? 1,
         updatedAt: savedWorkflow.updatedAt
           ? String(savedWorkflow.updatedAt).slice(0, 10)
           : new Date().toISOString().slice(0, 10),
-      }
+      };
 
       setWorkflows((current) => {
         const alreadyExists = current.some(
           (workflow) =>
-            workflow.name.toLowerCase() ===
-            newWorkflow.name.toLowerCase(),
-        )
+            workflow.name.toLowerCase() === newWorkflow.name.toLowerCase(),
+        );
 
-        if (alreadyExists) return current
+        if (alreadyExists) return current;
 
-        return [...current, newWorkflow]
-      })
+        return [...current, newWorkflow];
+      });
 
-      setSearch('')
-      setStatusFilter('All')
-      setIsCreateOpen(false)
-      setName('')
-      setDescription('')
-      setNameError('')
-      setApiError('')
+      setSearch("");
+      setStatusFilter("All");
+      setIsCreateOpen(false);
+      setName("");
+      setDescription("");
+      setNameError("");
+      setApiError("");
 
-      window.setTimeout(
-        () => createButtonRef.current?.focus(),
-        0,
-      )
+      window.setTimeout(() => createButtonRef.current?.focus(), 0);
     } catch (error) {
       setApiError(
         error instanceof Error
           ? error.message
-          : 'Unable to save the workflow. Please try again.',
-      )
+          : "Unable to save the workflow. Please try again.",
+      );
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
+    }
+  }
+  async function handleRunWorkflow(workflow: Workflow) {
+    if (!workflow.isPersisted) {
+      setExecutionError(
+        "This is a sample workflow. Save it to the backend before running it.",
+      );
+      setExecutionMessage("");
+      return;
+    }
+
+    if (!tenantApiKey?.trim()) {
+      setExecutionError("API authentication is not configured.");
+      setExecutionMessage("");
+      return;
+    }
+
+    if (runningWorkflowId) return;
+
+    setRunningWorkflowId(String(workflow.id));
+    setExecutionError("");
+    setExecutionMessage("");
+    setLastExecution(null);
+
+    try {
+      const execution = await startExecution(String(workflow.id), tenantApiKey);
+
+      setLastExecution(execution);
+
+      if (execution.status === "completed") {
+        setExecutionMessage(
+          `Workflow "${workflow.name}" completed successfully.`,
+        );
+      } else {
+        setExecutionError(
+          typeof execution.error === "string"
+            ? execution.error
+            : execution.error?.message ||
+                `Workflow execution ended with status "${execution.status}".`,
+        );
+      }
+    } catch (error) {
+      setExecutionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to execute the workflow.",
+      );
+    } finally {
+      setRunningWorkflowId(null);
     }
   }
 
@@ -347,13 +373,9 @@ function WorkflowsPage({
     <section className="workflows-page">
       <header className="workflows-page__header">
         <div>
-          <p className="workflows-page__eyebrow">
-            WORKFLOW MANAGEMENT
-          </p>
+          <p className="workflows-page__eyebrow">WORKFLOW MANAGEMENT</p>
           <h1>Workflows</h1>
-          <p>
-            Build, search, and manage your workflow definitions.
-          </p>
+          <p>Build, search, and manage your workflow definitions.</p>
         </div>
 
         <button
@@ -361,8 +383,8 @@ function WorkflowsPage({
           type="button"
           className="workflows-page__create"
           onClick={() => {
-            setApiError('')
-            setIsCreateOpen(true)
+            setApiError("");
+            setIsCreateOpen(true);
           }}
         >
           <span aria-hidden="true">+</span> Create workflow
@@ -370,44 +392,66 @@ function WorkflowsPage({
       </header>
 
       <p className="workflows-page__demo-note">
-        Sample workflows are displayed for demonstration.
-        Workflows created through the form are added after the
-        backend confirms a successful save. Saved workflows are
-        loaded from the backend when authentication is configured.
+        Sample workflows are displayed for demonstration. Workflows created
+        through the form are added after the backend confirms a successful save.
+        Saved workflows are loaded from the backend when authentication is
+        configured.
       </p>
 
       <p className="workflows-page__note" role="status">
         {graph
           ? `Workflow graph available (${graph.nodes.length} nodes, ${graph.edges.length} edges).`
-          : 'Open Node Preview to prepare a workflow graph.'}
+          : "Open Node Preview to prepare a workflow graph."}
       </p>
 
       <div className="workflows-page__filters">
         <div className="workflows-page__search-field">
-          <label htmlFor="workflow-search">
-            Search workflows
-          </label>
+          <label htmlFor="workflow-search">Search workflows</label>
           <input
             id="workflow-search"
             type="search"
             placeholder="Search by name or description..."
             value={search}
-            onChange={(event) =>
-              setSearch(event.target.value)
-            }
+            onChange={(event) => setSearch(event.target.value)}
           />
         </div>
 
+        <div className="workflows-page__filters">
+          {/* Keep your existing search and status-filter code here */}
+        </div>
+
+        {/* Execution feedback — insert here */}
+        {executionMessage && (
+          <p role="status" className="workflows-page__note">
+            {executionMessage}
+          </p>
+        )}
+
+        {executionError && (
+          <p role="alert" className="workflows-page__error">
+            {executionError}
+          </p>
+        )}
+
+        {lastExecution && (
+          <p className="workflows-page__note">
+            Execution status: <strong>{lastExecution.status}</strong>
+            {" · "}
+            Nodes recorded: {lastExecution.nodeResults?.length ?? 0}
+          </p>
+        )}
+
+        <div className="workflows-page__results-heading">
+          <h2>All workflows</h2>
+          <span>{filteredWorkflows.length} shown</span>
+        </div>
+
         <div className="workflows-page__status-field">
-          <label htmlFor="workflow-status">
-            Filter by status
-          </label>
+          <label htmlFor="workflow-status">Filter by status</label>
           <select
             id="workflow-status"
             value={statusFilter}
-            onChange={(event) =>
-              setStatusFilter(event.target.value)
-            }
+            onChange={(event) => setStatusFilter(event.target.value)}
           >
             <option>All</option>
             <option>Active</option>
@@ -423,22 +467,17 @@ function WorkflowsPage({
       </div>
 
       {workflows.length === 0 ? (
-        <WorkflowListState
-          loading={false}
-          hasWorkflows={false}
-        />
+        <WorkflowListState loading={false} hasWorkflows={false} />
       ) : filteredWorkflows.length === 0 ? (
         <div className="workflows-page__empty" role="status">
           <h2>No matching workflows</h2>
-          <p>
-            Try another search term or change the status filter.
-          </p>
+          <p>Try another search term or change the status filter.</p>
           <button
             type="button"
             className="workflows-page__secondary"
             onClick={() => {
-              setSearch('')
-              setStatusFilter('All')
+              setSearch("");
+              setStatusFilter("All");
             }}
           >
             Clear filters
@@ -454,6 +493,9 @@ function WorkflowsPage({
               status={workflow.status}
               version={workflow.version}
               updatedAt={workflow.updatedAt}
+              canRun={workflow.isPersisted}
+              isRunning={runningWorkflowId === String(workflow.id)}
+              onRun={() => void handleRunWorkflow(workflow)}
             />
           ))}
         </div>
@@ -463,11 +505,8 @@ function WorkflowsPage({
         <div
           className="workflows-page__modal-backdrop"
           onMouseDown={(event) => {
-            if (
-              event.target === event.currentTarget &&
-              !isSaving
-            ) {
-              closeCreateModal()
+            if (event.target === event.currentTarget && !isSaving) {
+              closeCreateModal();
             }
           }}
         >
@@ -480,16 +519,9 @@ function WorkflowsPage({
           >
             <header className="workflows-page__modal-header">
               <div>
-                <p className="workflows-page__eyebrow">
-                  NEW DEFINITION
-                </p>
-                <h2 id="workflow-modal-title">
-                  Create workflow
-                </h2>
-                <p>
-                  Give your workflow a name and an optional
-                  description.
-                </p>
+                <p className="workflows-page__eyebrow">NEW DEFINITION</p>
+                <h2 id="workflow-modal-title">Create workflow</h2>
+                <p>Give your workflow a name and an optional description.</p>
               </div>
 
               <button
@@ -509,9 +541,7 @@ function WorkflowsPage({
               noValidate
             >
               <div className="workflows-page__form-field">
-                <label htmlFor="workflow-name">
-                  Workflow name *
-                </label>
+                <label htmlFor="workflow-name">Workflow name *</label>
                 <input
                   ref={nameInputRef}
                   id="workflow-name"
@@ -519,17 +549,15 @@ function WorkflowsPage({
                   type="text"
                   value={name}
                   onChange={(event) => {
-                    setName(event.target.value)
-                    if (nameError) setNameError('')
-                    if (apiError) setApiError('')
+                    setName(event.target.value);
+                    if (nameError) setNameError("");
+                    if (apiError) setApiError("");
                   }}
                   maxLength={100}
                   placeholder="e.g. Payment Processing"
                   aria-invalid={Boolean(nameError)}
                   aria-describedby={
-                    nameError
-                      ? 'workflow-name-error'
-                      : undefined
+                    nameError ? "workflow-name-error" : undefined
                   }
                   autoFocus
                   disabled={isSaving}
@@ -555,8 +583,8 @@ function WorkflowsPage({
                   name="description"
                   value={description}
                   onChange={(event) => {
-                    setDescription(event.target.value)
-                    if (apiError) setApiError('')
+                    setDescription(event.target.value);
+                    if (apiError) setApiError("");
                   }}
                   rows={4}
                   maxLength={500}
@@ -570,10 +598,7 @@ function WorkflowsPage({
               </div>
 
               {apiError && (
-                <p
-                  className="workflows-page__error"
-                  role="alert"
-                >
+                <p className="workflows-page__error" role="alert">
                   {apiError}
                 </p>
               )}
@@ -593,21 +618,20 @@ function WorkflowsPage({
                   className="workflows-page__create"
                   disabled={isSaving}
                 >
-                  {isSaving ? 'Saving...' : 'Save workflow'}
+                  {isSaving ? "Saving..." : "Save workflow"}
                 </button>
               </div>
 
               <p className="workflows-page__note">
-                New workflows start in Draft status. Saving
-                requires a valid graph and approved API
-                authentication.
+                New workflows start in Draft status. Saving requires a valid
+                graph and approved API authentication.
               </p>
             </form>
           </section>
         </div>
       )}
     </section>
-  )
+  );
 }
 
-export default WorkflowsPage
+export default WorkflowsPage;
