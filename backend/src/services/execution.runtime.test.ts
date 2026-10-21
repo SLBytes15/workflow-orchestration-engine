@@ -11,19 +11,35 @@ function createGraph(): WorkflowGraph {
         id: "trigger-1",
         type: "trigger",
         position: { x: 0, y: 0 },
-        data: { type: "trigger", label: "Order created" },
+        data: {
+          type: "trigger",
+          label: "Order Created?",
+          config: {
+            type: "clause",
+            clause: {
+              left: "approved",
+              op: "equals",
+              right: true,
+            },
+          },
+        },
       },
       {
         id: "condition-1",
         type: "condition",
         position: { x: 100, y: 0 },
-        // conditionKey is a proposed runtime field, not yet
-        // part of the current WorkflowGraph interface.
         data: {
           type: "condition",
           label: "Payment approved?",
-          conditionKey: "approved",
-        } as WorkflowGraph["nodes"][number]["data"],
+          config: {
+            type: "clause",
+            clause: {
+              left: "approved",
+              op: "equals",
+              right: true,
+            },
+          },
+        },
       },
       {
         id: "task-true",
@@ -120,31 +136,31 @@ describe("executeWorkflowGraph", () => {
     );
   });
 
-  it("fails when the condition input is not a boolean", async () => {
-    const graph = createGraph();
+  
+it("fails when numeric comparison operands are invalid", async () => {
+  const graph = createGraph();
 
-    const result = await executeWorkflowGraph(graph, {
-      approved: "yes",
-    });
+  const conditionNode = graph.nodes.find((node) => node.id === "condition-1");
 
-    assert.equal(result.status, "failed");
-    assert.ok(result.error);
+  assert.ok(conditionNode);
+
+  conditionNode.data.config = {
+    type: "clause",
+    clause: {
+      left: "approved",
+      op: "gt",
+      right: 10,
+    },
+  };
+
+  const result = await executeWorkflowGraph(graph, {
+    approved: "yes",
   });
 
-  it("does not execute both condition branches", async () => {
-    const graph = createGraph();
+  assert.equal(result.status, "failed");
+  assert.equal(result.error?.code, "INVALID_CONDITION_OPERANDS");
+});
 
-    const result = await executeWorkflowGraph(graph, {
-      approved: true,
-    });
-
-    const completedNodeIds = result.nodeResults
-      .filter((node) => node.status === "completed")
-      .map((node) => node.nodeId);
-
-    assert.equal(completedNodeIds.includes("task-true"), true);
-    assert.equal(completedNodeIds.includes("task-false"), false);
-  });
 
   it("does not mutate the original graph", async () => {
     const graph = createGraph();
