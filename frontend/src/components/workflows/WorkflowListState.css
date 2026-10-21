@@ -12,3 +12,15 @@
     padding: 16px 12px;
   }
 }
+
+/* Workflow list state polish */
+.workflow-list-state {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 28px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  text-align: center;
+  line-height: 1.6;
+}

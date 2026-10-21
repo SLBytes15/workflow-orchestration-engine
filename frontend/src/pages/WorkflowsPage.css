@@ -332,3 +332,49 @@
     transition: none;
   }
 }
+
+/* Workflows page polish */
+.workflows-page__load-status {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.workflows-page__load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid #dc8b8b;
+  border-radius: 10px;
+  background: #fff7f7;
+  color: #8b2424;
+}
+
+.workflows-page__load-error p {
+  min-width: 0;
+  flex: 1 1 240px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflows-page__load-error button {
+  flex-shrink: 0;
+}
+
+@media (max-width: 600px) {
+  .workflows-page__load-error {
+    align-items: stretch;
+  }
+
+  .workflows-page__load-error button {
+    width: 100%;
+  }
+}

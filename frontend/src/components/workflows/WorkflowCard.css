@@ -122,3 +122,57 @@
     transform: none;
   }
 }
+
+/* Workflow card polish */
+.workflow-card {
+  align-items: stretch;
+  padding: 20px;
+  border-radius: 14px;
+  gap: 16px;
+}
+
+.workflow-card__content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.workflow-card__heading {
+  align-items: flex-start;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.workflow-card h2 {
+  min-width: 0;
+  font-size: 18px;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+
+.workflow-card__description {
+  margin-bottom: 18px;
+  line-height: 1.65;
+}
+
+.workflow-card__meta {
+  align-items: center;
+  gap: 8px 14px;
+  line-height: 1.5;
+}
+
+.workflow-card:focus-within {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
+}
+
+@media (max-width: 600px) {
+  .workflow-card {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .workflow-card__heading {
+    gap: 8px;
+  }
+}

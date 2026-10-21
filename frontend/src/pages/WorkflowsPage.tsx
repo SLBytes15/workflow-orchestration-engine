@@ -72,6 +72,9 @@ function WorkflowsPage({
   const [nameError, setNameError] = useState('')
   const [apiError, setApiError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [isLoadingSavedWorkflows, setIsLoadingSavedWorkflows] = useState(Boolean(tenantApiKey?.trim()))
+  const [workflowLoadError, setWorkflowLoadError] = useState('')
+  const [workflowReloadKey, setWorkflowReloadKey] = useState(0)
 
   const createButtonRef = useRef<HTMLButtonElement>(null)
   const modalRef = useRef<HTMLElement>(null)
@@ -140,10 +143,16 @@ function WorkflowsPage({
           return merged
         })
       } catch (error) {
-        console.error(
-          'Unable to load saved workflows:',
-          error,
-        )
+        console.error('Unable to load saved workflows:', error)
+        if (!cancelled) {
+          setWorkflowLoadError(
+            error instanceof Error
+              ? error.message
+              : 'Saved workflows could not be loaded. Please try again.',
+          )
+        }
+      } finally {
+        if (!cancelled) setIsLoadingSavedWorkflows(false)
       }
     }
 
@@ -152,7 +161,7 @@ function WorkflowsPage({
     return () => {
       cancelled = true
     }
-  }, [tenantApiKey])
+  }, [tenantApiKey, workflowReloadKey])
 
   // Manage keyboard focus inside the create-workflow dialog.
   useEffect(() => {
@@ -376,6 +385,30 @@ function WorkflowsPage({
         loaded from the backend when authentication is configured.
       </p>
 
+      {isLoadingSavedWorkflows && (
+        <p className="workflows-page__load-status" role="status" aria-live="polite">
+          Loading saved workflows...
+        </p>
+      )}
+
+      {workflowLoadError && (
+        <div className="workflows-page__load-error" role="alert">
+          <p>Saved workflows could not be refreshed: {workflowLoadError}</p>
+          <button
+            type="button"
+            className="workflows-page__secondary"
+            onClick={() => {
+              setWorkflowLoadError('')
+              setIsLoadingSavedWorkflows(true)
+              setWorkflowReloadKey((current) => current + 1)
+            }}
+            disabled={isLoadingSavedWorkflows}
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
       <p className="workflows-page__note" role="status">
         {graph
           ? `Workflow graph available (${graph.nodes.length} nodes, ${graph.edges.length} edges).`
@@ -424,7 +457,7 @@ function WorkflowsPage({
 
       {workflows.length === 0 ? (
         <WorkflowListState
-          loading={false}
+          loading={isLoadingSavedWorkflows}
           hasWorkflows={false}
         />
       ) : filteredWorkflows.length === 0 ? (
