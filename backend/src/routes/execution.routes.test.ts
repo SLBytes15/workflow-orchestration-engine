@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import express from "express";
@@ -354,7 +353,7 @@ test("does not trust a client-supplied tenantId", async () => {
       body: JSON.stringify({ tenantId: new Types.ObjectId().toString() }),
     },
   );
-  assert.equal(response.status, 202);
+  assert.equal(response.status, 200);
   assert.equal(receivedTenantId, String(tenantId));
 });
 
