@@ -1,15 +1,52 @@
 export type WorkflowGraphNodeType = "trigger" | "task" | "condition";
 
+export type ConditionOp =
+  | "equals"
+  | "notEquals"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "contains"
+  | "startsWith"
+  | "matches"
+  | "truthy";
+
+export interface ConditionClause {
+  left: string;
+  op: ConditionOp;
+  right?: unknown;
+}
+
+export type ConditionConfig =
+  | {
+      type: "clause";
+      clause: ConditionClause;
+    }
+  | {
+      type: "group";
+      logic: "and" | "or";
+      clauses: ConditionClause[];
+    }
+  | {
+      type: "js";
+      expression: string;
+    };
+
+export interface WorkflowNodeData {
+  type: WorkflowGraphNodeType;
+  label: string;
+  config?: unknown;
+}
+
+
 export interface WorkflowGraph {
   version: 1;
   nodes: Array<{
     id: string;
     type: WorkflowGraphNodeType;
     position: { x: number; y: number };
-    data: {
-      type: WorkflowGraphNodeType;
-      label: string;
-    };
+    data: WorkflowNodeData;
   }>;
   edges: Array<{
     id: string;
@@ -50,7 +87,7 @@ export function validateWorkflowGraph(value: unknown): string[] {
   const edgeIds = new Set<string>();
   const nodeTypes = new Map<string, string>();
   const adjacency = new Map<string, string[]>();
-  const conditionBranches = new Map<string, Set<string>>();
+  const conditionBranches = new Map<string, Map<string, number>>();
   let triggerCount = 0;
   let duplicateNodeId = false;
 
@@ -115,7 +152,7 @@ export function validateWorkflowGraph(value: unknown): string[] {
     }
 
     if (validId && validType && type === "condition") {
-      conditionBranches.set(id, new Set<string>());
+      conditionBranches.set(id, new Map<string, number>());
     }
   });
 
@@ -162,7 +199,11 @@ export function validateWorkflowGraph(value: unknown): string[] {
           `${path}.sourceHandle for a condition must be "true" or "false"`,
         );
       } else {
-        conditionBranches.get(source as string)?.add(sourceHandle);
+        const branches = conditionBranches.get(source as string);
+
+        if (branches) {
+          branches.set(sourceHandle, (branches.get(sourceHandle) ?? 0) + 1);
+        }
       }
     } else if (
       sourceHandle !== undefined &&
@@ -173,11 +214,18 @@ export function validateWorkflowGraph(value: unknown): string[] {
   });
 
   for (const [nodeId, branches] of conditionBranches) {
-    if (!branches.has("true")) {
-      errors.push(`Condition node "${nodeId}" is missing its true branch`);
-    }
-    if (!branches.has("false")) {
-      errors.push(`Condition node "${nodeId}" is missing its false branch`);
+    for (const branch of ["true", "false"] as const) {
+      const count = branches.get(branch) ?? 0;
+
+      if (count === 0) {
+        errors.push(
+          `Condition node "${nodeId}" is missing its ${branch} branch`,
+        );
+      } else if (count > 1) {
+        errors.push(
+          `Condition node "${nodeId}" has multiple ${branch} branches`,
+        );
+      }
     }
   }
 

@@ -23,7 +23,10 @@ let receivedWorkflowId: string | undefined;
 let receivedExecutionId: string | undefined;
 let receivedLimit: unknown;
 let receivedCursor: unknown;
-let mode: "normal" | "queue-error" | "not-found" | "unexpected-error" = "normal";
+
+let mode: "normal" | "execution-error" | "not-found" = "normal";
+
+let receivedInput: Record<string, unknown> | undefined;
 
 const resolver: TenantResolver = {
   async resolverTenant(apiKey: string) {
@@ -42,25 +45,40 @@ const execution = {
   tenantId,
   workflowId,
   workflowVersion: 3,
-  status: "queued",
-  startedAt: null,
+  status: "completed",
+  currentNodeId: null,
+  nodeResults: [
+    { nodeId: "trigger-1", status: "completed" },
+  ],
+  error: null,
+  startedAt: new Date("2026-10-18T10:00:00.000Z"),
+  completedAt: new Date("2026-10-18T10:00:01.000Z"),
   createdAt: new Date("2026-10-18T10:00:00.000Z"),
 };
 
 const service = {
-  async startExecution(tenant: Types.ObjectId, id: string) {
+  async startExecution(
+    tenant: Types.ObjectId,
+    id: string,
+    input: Record<string, unknown> = {},
+  ) {
     receivedTenantId = String(tenant);
     receivedWorkflowId = id;
+    receivedInput = input;
+
     if (!/^[a-f\d]{24}$/i.test(id)) {
-      throw new ExecutionServiceError(400, "VALIDATION_ERROR", "Invalid workflow ID");
+      throw new ExecutionServiceError(
+        400,
+        "VALIDATION_ERROR",
+        "Invalid workflow ID",
+      );
     }
 
-
-    if (mode === "queue-error") {
+    if (mode === "execution-error") {
       throw new ExecutionServiceError(
-        503,
-        "EXECUTION_QUEUE_UNAVAILABLE",
-        "Workflow execution is temporarily unavailable",
+        500,
+        "EXECUTION_FAILED",
+        "Workflow execution failed unexpectedly.",
       );
     }
 
@@ -79,13 +97,16 @@ const service = {
     receivedTenantId = String(tenant);
     receivedExecutionId = id;
     if (!/^[a-f\d]{24}$/i.test(id)) {
-      throw new ExecutionServiceError(400, "VALIDATION_ERROR", "Invalid execution ID");
+      throw new ExecutionServiceError(
+        400,
+        "VALIDATION_ERROR",
+        "Invalid execution ID",
+      );
     }
 
-    if (mode === "unexpected-error") {
+    if (mode === "execution-error") {
       throw new Error("private-db-secret internal stack details");
     }
-
 
     if (mode === "not-found") {
       throw new ExecutionServiceError(
@@ -165,6 +186,7 @@ function resetState() {
   receivedExecutionId = undefined;
   receivedLimit = undefined;
   receivedCursor = undefined;
+  receivedInput = undefined;
   mode = "normal";
 }
 
@@ -195,37 +217,59 @@ test("rejects execution requests with an invalid API key", async () => {
   assert.equal(response.status, 401);
 });
 
-test("starts an execution using the authenticated tenant", async () => {
+
+
+test("executes a workflow using the authenticated tenant and forwards input", async () => {
   resetState();
+
+  const input = { approved: true };
 
   const response = await fetch(
     `${baseUrl}/api/workflows/${workflowId}/executions`,
-    { method: "POST", headers: authHeaders() },
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ input }),
+    },
   );
 
-  assert.equal(response.status, 202);
+  assert.equal(response.status, 200);
   assert.equal(receivedTenantId, String(tenantId));
   assert.equal(receivedWorkflowId, String(workflowId));
 
+  // Verify the request input reached the service.
+  assert.deepEqual(receivedInput, input);
+
   const body = await response.json();
-  assert.equal(body.execution.status, "queued");
+
+  assert.equal(body.execution.status, "completed");
   assert.equal(body.execution.workflowVersion, 3);
+  assert.deepEqual(body.execution.nodeResults, [
+    { nodeId: "trigger-1", status: "completed" },
+  ]);
+  assert.equal(body.execution.error, null);
+  assert.ok(body.execution.completedAt);
 });
+
+
 
 test("returns 503 when the execution queue is unavailable", async () => {
   resetState();
-  mode = "queue-error";
+  mode = "execution-error";
 
   const response = await fetch(
     `${baseUrl}/api/workflows/${workflowId}/executions`,
     { method: "POST", headers: authHeaders() },
   );
 
-  assert.equal(response.status, 503);
+  assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), {
     error: {
-      code: "EXECUTION_QUEUE_UNAVAILABLE",
-      message: "Workflow execution is temporarily unavailable",
+      code: "EXECUTION_FAILED",
+      message: "Workflow execution failed unexpectedly.",
     },
   });
 });
@@ -243,7 +287,7 @@ test("returns a tenant-scoped execution by ID", async () => {
   assert.equal(receivedExecutionId, String(executionId));
 
   const body = await response.json();
-  assert.equal(body.execution.status, "queued");
+  assert.equal(body.execution.status, "completed");
 });
 
 test("returns not-found for an unavailable execution", async () => {
@@ -337,13 +381,13 @@ test("does not trust a client-supplied tenantId", async () => {
       body: JSON.stringify({ tenantId: new Types.ObjectId().toString() }),
     },
   );
-  assert.equal(response.status, 202);
+  assert.equal(response.status, 200);
   assert.equal(receivedTenantId, String(tenantId));
 });
 
 test("does not expose internal details for unexpected errors", async () => {
   resetState();
-  mode = "unexpected-error";
+  mode = "execution-error";
   const response = await fetch(
     `${baseUrl}/api/executions/${executionId}`,
     { headers: authHeaders() },
