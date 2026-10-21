@@ -21,10 +21,29 @@ export function createExecutionRouter(
         return;
       }
 
-     const execution = await service.startExecution(
-       tenant.tenantId,
-       String(req.params.workflowId),
-     );
+    
+      const input = req.body?.input;
+
+      if (
+        input !== undefined &&
+        (input === null || typeof input !== "object" || Array.isArray(input))
+      ) {
+        res.status(400).json({
+          error: {
+            code: "INVALID_EXECUTION_INPUT",
+            message: "Execution input must be a JSON object.",
+          },
+        });
+        return;
+      }
+
+
+const execution = await service.startExecution(
+  tenant.tenantId,
+  String(req.params.workflowId),
+  input ?? {},
+);
+
 
      res.status(200).json({
        message:

@@ -320,6 +320,9 @@ function WorkflowsPage({ graph, tenantApiKey }: WorkflowsPageProps) {
     }
   }
   async function handleRunWorkflow(workflow: Workflow) {
+    console.log("Full workflow object:", workflow);
+    console.log("Workflow ID:", workflow.id);
+    console.log("Workflow object keys:", Object.keys(workflow));
     if (!workflow.isPersisted) {
       setExecutionError(
         "This is a sample workflow. Save it to the backend before running it.",
@@ -342,7 +345,14 @@ function WorkflowsPage({ graph, tenantApiKey }: WorkflowsPageProps) {
     setLastExecution(null);
 
     try {
-      const execution = await startExecution(String(workflow.id), tenantApiKey);
+      console.log("Workflow ID:", workflow.id);
+      console.log("Workflow ID type:", typeof workflow.id);
+      const execution = await startExecution(
+        String(workflow.id),
+        tenantApiKey,
+        { approved: true },
+      );
+
 
       setLastExecution(execution);
 

@@ -20,6 +20,7 @@ function App() {
     useState<WorkflowGraph | null>(null)
 
   const tenantApiKey = import.meta.env.VITE_API_KEY
+  console.log("API key configured:", Boolean(tenantApiKey?.trim()));
 
   return (
     <div className="app-layout">

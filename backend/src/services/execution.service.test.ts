@@ -30,6 +30,66 @@ const workflow = {
   },
 };
 
+const conditionalWorkflow = {
+  ...workflow,
+  graph: {
+    version: 1 as const,
+    nodes: [
+      {
+        id: "trigger-1",
+        type: "trigger" as const,
+        position: { x: 0, y: 0 },
+        data: { type: "trigger" as const, label: "Start" },
+      },
+      {
+        id: "condition-1",
+        type: "condition" as const,
+        position: { x: 100, y: 0 },
+        data: {
+          type: "condition" as const,
+          label: "Payment approved?",
+          config: {
+            type: "clause" as const,
+            clause: {
+              left: "approved",
+              op: "equals" as const,
+              right: true,
+            },
+          },
+        },
+      },
+      {
+        id: "task-true",
+        type: "task" as const,
+        position: { x: 200, y: -50 },
+        data: { type: "task" as const, label: "Approved path" },
+      },
+      {
+        id: "task-false",
+        type: "task" as const,
+        position: { x: 200, y: 50 },
+        data: { type: "task" as const, label: "Rejected path" },
+      },
+    ],
+    edges: [
+      { id: "edge-1", source: "trigger-1", target: "condition-1" },
+      {
+        id: "edge-2",
+        source: "condition-1",
+        target: "task-true",
+        sourceHandle: "true",
+      },
+      {
+        id: "edge-3",
+        source: "condition-1",
+        target: "task-false",
+        sourceHandle: "false",
+      },
+    ],
+  },
+};
+
+
 function makeDependencies(
   overrides: Partial<ExecutionServiceDependencies> = {},
 ): ExecutionServiceDependencies {
@@ -62,8 +122,10 @@ test("executes and persists the final execution for the trusted tenant", async (
     update: Record<string, unknown>;
   }> = [];
 
+
   const service = createExecutionService(
     makeDependencies({
+      findWorkflow: async () => conditionalWorkflow,
       updateExecution: async (tenant, id, expectedStatus, update) => {
         updates.push({
           tenant,
@@ -77,20 +139,32 @@ test("executes and persists the final execution for the trusted tenant", async (
           tenantId: tenant,
           workflowId,
           workflowVersion: 3,
-          graphSnapshot: workflow.graph,
+          graphSnapshot: conditionalWorkflow.graph,
           ...update,
         };
       },
     }),
   );
 
-  const result = await service.startExecution(tenantId, String(workflowId));
+const input = { approved: true };
+
+const result = await service.startExecution(
+  tenantId,
+  String(workflowId),
+  input,
+);
 
   assert.equal(String(result.tenantId), String(tenantId));
   assert.equal(result.status, "completed");
   assert.equal(result.workflowVersion, 3);
   assert.deepEqual(result.nodeResults, [
     { nodeId: "trigger-1", status: "completed" },
+    {
+      nodeId: "condition-1",
+      status: "completed",
+      output: { result: true },
+    },
+    { nodeId: "task-true", status: "completed" },
   ]);
 
   assert.equal(updates.length, 2);
