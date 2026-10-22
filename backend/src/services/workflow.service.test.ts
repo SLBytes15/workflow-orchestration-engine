@@ -11,6 +11,15 @@ import type { WorkflowGraph } from "../validators/workflow-graph.validator";
 function setup() {
   const storedRecords: CreatedWorkflow[] = [];
   const listCalls: Types.ObjectId[] = [];
+  const graphUpdates: Array<{
+    tenantId: Types.ObjectId;
+    workflowId: Types.ObjectId;
+    graph: WorkflowGraph;
+  }> = [];
+  const workflowDeletes: Array<{
+    tenantId: Types.ObjectId;
+    workflowId: Types.ObjectId;
+  }> = [];
 
   const dependencies: WorkflowServiceDependencies = {
     async createWorkflowRecord(record) {
@@ -22,11 +31,23 @@ function setup() {
       listCalls.push(tenantId);
       return storedRecords.filter((record) => record.tenantId.equals(tenantId));
     },
+
+    async updateWorkflowGraph(tenantId, workflowId, graph) {
+      graphUpdates.push({ tenantId, workflowId, graph });
+      return { tenantId, _id: workflowId, graph };
+    },
+
+    async deleteWorkflow(tenantId, workflowId) {
+      workflowDeletes.push({ tenantId, workflowId });
+      return { tenantId, _id: workflowId };
+    },
   };
 
   return {
     storedRecords,
     listCalls,
+    graphUpdates,
+    workflowDeletes,
     service: createWorkflowService(dependencies),
   };
 }
@@ -163,6 +184,12 @@ test("propagates persistence errors", async () => {
     async findWorkflowRecordsByTenant() {
       return [];
     },
+    async updateWorkflowGraph() {
+      return null;
+    },
+    async deleteWorkflow() {
+      return null;
+    },
   };
 
   const service = createWorkflowService(dependencies);
@@ -197,4 +224,74 @@ test("lists workflows only for the supplied tenant", async () => {
   assert.equal(context.listCalls[0], tenantA);
   assert.equal(result.length, 1);
   assert.equal((result[0] as CreatedWorkflow).name, "Tenant A workflow");
+});
+
+test("updates only the graph for the specified workflow and tenant", async () => {
+  const context = setup();
+  const tenantId = new Types.ObjectId();
+  const workflowId = new Types.ObjectId();
+  const graph: WorkflowGraph = {
+    ...validGraph,
+    nodes: validGraph.nodes.map((node) =>
+      node.type === "condition"
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              config: {
+                type: "clause",
+                clause: { left: "approved", op: "equals", right: true },
+              },
+            },
+          }
+        : node,
+    ),
+  };
+
+  const result = await context.service.updateWorkflowGraph(
+    tenantId,
+    workflowId.toString(),
+    graph,
+  );
+
+  assert.deepEqual(context.graphUpdates, [{ tenantId, workflowId, graph }]);
+  assert.deepEqual(result, { tenantId, _id: workflowId, graph });
+});
+
+test("rejects malformed workflow IDs without attempting a graph update", async () => {
+  const context = setup();
+
+  assert.equal(
+    await context.service.updateWorkflowGraph(
+      new Types.ObjectId(),
+      "not-an-object-id",
+      validGraph,
+    ),
+    null,
+  );
+  assert.deepEqual(context.graphUpdates, []);
+});
+
+test("deletes a workflow by both its ID and authenticated tenant", async () => {
+  const context = setup();
+  const tenantId = new Types.ObjectId();
+  const workflowId = new Types.ObjectId();
+
+  const result = await context.service.deleteWorkflow(
+    tenantId,
+    workflowId.toString(),
+  );
+
+  assert.deepEqual(context.workflowDeletes, [{ tenantId, workflowId }]);
+  assert.deepEqual(result, { tenantId, _id: workflowId });
+});
+
+test("rejects malformed workflow IDs without attempting deletion", async () => {
+  const context = setup();
+
+  assert.equal(
+    await context.service.deleteWorkflow(new Types.ObjectId(), "invalid"),
+    null,
+  );
+  assert.deepEqual(context.workflowDeletes, []);
 });

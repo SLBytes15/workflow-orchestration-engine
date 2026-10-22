@@ -1,4 +1,6 @@
-export const validGraph = {
+import type { WorkflowGraph } from "./workflow-graph.validator";
+
+export const validGraph: WorkflowGraph = {
   version: 1,
   nodes: [
     {
@@ -11,7 +13,14 @@ export const validGraph = {
       id: "condition-1",
       type: "condition",
       position: { x: 300, y: 100 },
-      data: { type: "condition", label: "Order valid?" },
+      data: {
+        type: "condition",
+        label: "Order valid?",
+        config: {
+          type: "clause",
+          clause: { left: "approved", op: "equals", right: true },
+        },
+      },
     },
     {
       id: "task-true",

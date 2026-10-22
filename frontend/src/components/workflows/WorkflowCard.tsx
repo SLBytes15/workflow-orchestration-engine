@@ -1,4 +1,5 @@
 import './WorkflowCard.css'
+import { isRunButtonDisabled } from "../../workflowState";
 
 type WorkflowStatus = 'Active' | 'Draft' | 'Paused'
 
@@ -8,6 +9,9 @@ type WorkflowCardProps = {
   status: WorkflowStatus;
   version: number;
   updatedAt?: string;
+  onOpen?: () => void;
+  onDelete?: () => void;
+  isDeleting?: boolean;
   onRun?: () => void;
   isRunning?: boolean;
   canRun?: boolean;
@@ -18,6 +22,9 @@ function WorkflowCard({
   status,
   version,
   updatedAt,
+  onOpen,
+  onDelete,
+  isDeleting = false,
   onRun,
   isRunning = false,
   canRun = false,
@@ -43,16 +50,43 @@ function WorkflowCard({
         </div>
       </div>
 
+      {onOpen && (
+        <div className="workflow-card__actions">
+          <button
+            type="button"
+            className="workflow-card__open"
+            onClick={onOpen}
+            aria-label={`Open workflow: ${name}`}
+          >
+            Open workflow
+          </button>
+        </div>
+      )}
+
       {onRun && (
         <div className="workflow-card__actions">
           <button
             type="button"
             className="workflow-card__run"
             onClick={onRun}
-            disabled={!canRun || isRunning}
+            disabled={isRunButtonDisabled(canRun, isRunning)}
             aria-label={`Run workflow: ${name}`}
           >
             {isRunning ? "Running..." : "Run workflow"}
+          </button>
+        </div>
+      )}
+
+      {onDelete && (
+        <div className="workflow-card__actions">
+          <button
+            type="button"
+            className="workflow-card__delete"
+            onClick={onDelete}
+            disabled={isDeleting}
+            aria-label={`Delete workflow: ${name}`}
+          >
+            {isDeleting ? "Deleting..." : "Delete workflow"}
           </button>
         </div>
       )}
