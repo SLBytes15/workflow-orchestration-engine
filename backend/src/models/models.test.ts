@@ -3,9 +3,7 @@ import { describe, it } from "node:test";
 import TenantModel from "./tenant.model";
 import WorkflowModel from "./workflow.model";
 import { validGraph } from "../validators/validGraph.fixture";
-
 import WorkflowExecutionModel from "./WorkflowExecution";
-
 
 describe("Tenant schema", () => {
   it("requires name and slug", async () => {
@@ -89,7 +87,6 @@ describe("Workflow schema", () => {
   });
 });
 
-
 describe("WorkflowExecution schema", () => {
   const validExecution = () => ({
     tenantId: "507f1f77bcf86cd799439011",
@@ -130,9 +127,9 @@ describe("WorkflowExecution schema", () => {
 
       return Boolean(
         validationError.errors?.tenantId &&
-        validationError.errors?.workflowId &&
-        validationError.errors?.workflowVersion &&
-        validationError.errors?.graphSnapshot,
+          validationError.errors?.workflowId &&
+          validationError.errors?.workflowVersion &&
+          validationError.errors?.graphSnapshot,
       );
     });
   });
@@ -154,6 +151,7 @@ describe("WorkflowExecution schema", () => {
     assert.equal(execution.status, "queued");
     assert.equal(execution.currentNodeId, null);
     assert.deepEqual(execution.nodeResults, []);
+    assert.equal(execution.compensation, undefined);
     assert.equal(execution.error, null);
     assert.equal(execution.startedAt, null);
     assert.equal(execution.completedAt, null);
@@ -179,6 +177,103 @@ describe("WorkflowExecution schema", () => {
     await assert.rejects(execution.validate());
   });
 
+  it("accepts supported execution compensation statuses", async () => {
+    for (const status of [
+      "not_started",
+      "running",
+      "completed",
+      "failed",
+    ]) {
+      const execution = new WorkflowExecutionModel({
+        ...validExecution(),
+        compensation: { status },
+      });
+
+      await assert.doesNotReject(execution.validate());
+    }
+  });
+
+  it("rejects an unsupported execution compensation status", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      compensation: { status: "cancelled" },
+    });
+
+    await assert.rejects(execution.validate());
+  });
+
+  it("accepts supported per-node compensation statuses", async () => {
+    for (const status of [
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "skipped",
+    ]) {
+      const execution = new WorkflowExecutionModel({
+        ...validExecution(),
+        nodeResults: [
+          {
+            nodeId: "node-1",
+            status: "failed",
+            compensation: { status },
+          },
+        ],
+      });
+
+      await assert.doesNotReject(execution.validate());
+    }
+  });
+
+  it("rejects an unsupported per-node compensation status", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      nodeResults: [
+        {
+          nodeId: "node-1",
+          status: "failed",
+          compensation: { status: "cancelled" },
+        },
+      ],
+    });
+
+    await assert.rejects(execution.validate());
+  });
+
+  it("allows optional compensation metadata fields to be omitted", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      compensation: { status: "completed" },
+      nodeResults: [
+        {
+          nodeId: "node-1",
+          status: "completed",
+          compensation: { status: "skipped" },
+        },
+      ],
+    });
+
+    await assert.doesNotReject(execution.validate());
+  });
+
+  it("accepts legacy records without compensation metadata", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      nodeResults: [
+        {
+          nodeId: "node-1",
+          status: "completed",
+          output: { value: 1 },
+        },
+      ],
+    });
+
+    await assert.doesNotReject(execution.validate());
+    assert.equal(execution.compensation, undefined);
+    assert.equal(execution.nodeResults[0].compensation, undefined);
+    assert.equal(execution.nodeResults[0].output.value, 1);
+  });
+
   it("rejects a workflow version below one", async () => {
     const execution = new WorkflowExecutionModel({
       ...validExecution(),
@@ -189,7 +284,10 @@ describe("WorkflowExecution schema", () => {
   });
 
   it("enables timestamps", () => {
-    assert.equal(WorkflowExecutionModel.schema.options.timestamps, true);
+    assert.equal(
+      WorkflowExecutionModel.schema.options.timestamps,
+      true,
+    );
   });
 
   it("declares tenant-scoped query indexes", () => {

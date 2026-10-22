@@ -1,5 +1,62 @@
 import { Schema, model, models } from "mongoose";
 
+const executionCompensationSchema = new Schema(
+  {
+    status: {
+      type: String,
+      enum: ["not_started", "running", "completed", "failed"],
+      required: true,
+    },
+    startedAt: {
+      type: Date,
+      default: undefined,
+    },
+    completedAt: {
+      type: Date,
+      default: undefined,
+    },
+    error: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
+  },
+  { _id: false },
+);
+
+const nodeCompensationSchema = new Schema(
+  {
+    status: {
+      type: String,
+      enum: ["pending", "running", "completed", "failed", "skipped"],
+      required: true,
+    },
+    startedAt: {
+      type: Date,
+      default: undefined,
+    },
+    completedAt: {
+      type: Date,
+      default: undefined,
+    },
+    error: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
+  },
+  { _id: false },
+);
+
+const nodeResultSchema = new Schema(
+  {
+    compensation: {
+      type: nodeCompensationSchema,
+      required: false,
+      default: undefined,
+    },
+  },
+  { _id: false, strict: false },
+);
+
 const workflowExecutionSchema = new Schema(
   {
     tenantId: {
@@ -40,8 +97,14 @@ const workflowExecutionSchema = new Schema(
     },
 
     nodeResults: {
-      type: [Schema.Types.Mixed],
+      type: [nodeResultSchema],
       default: [],
+    },
+
+    compensation: {
+      type: executionCompensationSchema,
+      required: false,
+      default: undefined,
     },
 
     error: {
