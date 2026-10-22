@@ -159,8 +159,93 @@ describe("WorkflowExecution schema", () => {
     assert.equal(execution.completedAt, null);
   });
 
+ it("accepts legacy node results without compensation metadata", async () => {
+  const execution = new WorkflowExecutionModel({
+    ...validExecution(),
+    nodeResults: [
+      { nodeId: "node-1", status: "completed" },
+      {
+        nodeId: "node-2",
+        status: "failed",
+        error: { code: "NODE_FAILED", message: "Node failed" },
+      },
+    ],
+  });
+
+  await assert.doesNotReject(execution.validate());
+  assert.equal(execution.nodeResults[0].compensation, undefined);
+});
+
+it("accepts nested compensation metadata", async () => {
+  const execution = new WorkflowExecutionModel({
+    ...validExecution(),
+    status: "compensating",
+    nodeResults: [
+      {
+        nodeId: "node-1",
+        status: "completed",
+        output: { reference: "example" },
+        compensation: {
+          status: "running",
+          startedAt: new Date("2026-10-22T10:00:00.000Z"),
+          completedAt: null,
+          error: null,
+        },
+      },
+    ],
+  });
+
+  await assert.doesNotReject(execution.validate());
+  assert.equal(
+    execution.nodeResults[0].compensation.status,
+    "running",
+  );
+});
+
+it("diagnoses unsupported node-result and compensation statuses", async () => {
+  const invalidNodeResult = new WorkflowExecutionModel({
+    ...validExecution(),
+    nodeResults: [{ nodeId: "node-1", status: "interrupted" }],
+  });
+
+  const invalidCompensation = new WorkflowExecutionModel({
+    ...validExecution(),
+    nodeResults: [
+      {
+        nodeId: "node-1",
+        status: "completed",
+        compensation: { status: "interrupted" },
+      },
+    ],
+  });
+
+  const nodeResultError = await invalidNodeResult
+    .validate()
+    .then(() => null)
+    .catch((error: unknown) => error);
+
+  const compensationError = await invalidCompensation
+    .validate()
+    .then(() => null)
+    .catch((error: unknown) => error);
+
+  assert.ok(nodeResultError, "Expected invalid node status to fail validation");
+  assert.ok(
+    compensationError,
+    "Expected invalid compensation status to fail validation",
+  );
+});
+
   it("accepts the supported execution statuses", async () => {
-    for (const status of ["queued", "running", "completed", "failed"]) {
+    for (const status of [
+      "queued",
+      "running",
+      "completed",
+      "failed",
+      "compensating",
+      "compensated",
+      "compensation_failed",
+    ]) {
       const execution = new WorkflowExecutionModel({
         ...validExecution(),
         status,
