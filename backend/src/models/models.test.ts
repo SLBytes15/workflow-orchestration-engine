@@ -264,6 +264,51 @@ it("diagnoses unsupported node-result and compensation statuses", async () => {
     await assert.rejects(execution.validate());
   });
 
+  
+  it("preserves the original execution error separately when compensation fails", async () => {
+    const originalError = {
+      code: "EXECUTION_FAILED",
+      message: "The workflow step failed",
+      details: { nodeId: "node-1" },
+    };
+
+    const compensationError = {
+      code: "COMPENSATION_FAILED",
+      message: "Rollback failed",
+    };
+
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      status: "compensation_failed",
+      error: originalError,
+      nodeResults: [
+        {
+          nodeId: "node-1",
+          status: "failed",
+          error: {
+            code: "NODE_FAILED",
+            message: "The workflow step failed",
+          },
+          compensation: {
+            status: "failed",
+            error: compensationError,
+          },
+        },
+      ],
+    });
+
+    await assert.doesNotReject(execution.validate());
+
+    // The original execution error must remain unchanged.
+    assert.deepEqual(execution.error, originalError);
+
+    // The compensation failure must be recorded separately.
+    assert.deepEqual(
+      execution.nodeResults[0].compensation.error,
+      compensationError,
+    );
+  });
+
   it("rejects a workflow version below one", async () => {
     const execution = new WorkflowExecutionModel({
       ...validExecution(),
