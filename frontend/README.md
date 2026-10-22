@@ -64,6 +64,32 @@ These come from `package.json`. Run them from inside `frontend/`.
 | `npm run preview` | Serves the production build locally for a final check |
 | `npm run lint` | Runs the Oxlint linter |
 
+## Execution API request contract
+
+The existing execution client sends:
+
+```json
+{
+  "input": {}
+}
+```
+
+to:
+
+```text
+POST /api/workflows/:workflowId/executions
+```
+
+The tenant API key is sent in the `X-API-Key` header. `workflowId` must be the
+string ID returned by the workflow API. Do not use a numeric placeholder such as
+`1`.
+
+The current backend returns HTTP 200 with an execution response for the
+synchronous execution path. Non-2xx responses, including HTTP 400 for invalid
+input, are surfaced as errors and are not treated as execution success.
+
+The client URL-encodes workflow and execution IDs before sending requests.
+
 ## Stopping the development server
 
 Press `Ctrl + C` in the terminal running `npm run dev`.
