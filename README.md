@@ -22,3 +22,7 @@ Four-member internship team.
 
 ## Current Scope
 Requirements analysis and project setup. Implementation details are pending confirmation against the official project brief.
+
+## Workflow Execution
+
+The backend defines tenant-authenticated endpoints for requesting workflow executions and retrieving execution history and execution details. Execution requests are currently unavailable because no execution worker is configured. Browser end-to-end verification is pending.

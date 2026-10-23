@@ -102,6 +102,17 @@ test("rejects an empty node label", () => {
   );
 });
 
+test("rejects node labels longer than 120 characters", () => {
+  const graph = structuredClone(validGraph);
+  graph.nodes[0].data.label = "x".repeat(121);
+
+  assert.ok(
+    validateWorkflowGraph(graph).some((error) =>
+      error.includes("data.label must not exceed 120 characters"),
+    ),
+  );
+});
+
 test("rejects duplicate node IDs", () => {
   const graph = structuredClone(validGraph);
   graph.nodes[1].id = graph.nodes[0].id;

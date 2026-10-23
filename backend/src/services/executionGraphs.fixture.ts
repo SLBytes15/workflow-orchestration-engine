@@ -1,14 +1,5 @@
 import type { WorkflowGraph } from "../validators/workflow-graph.validator";
 
-type GraphNode = WorkflowGraph["nodes"][number];
-
-/**
- * The runtime reads `data.conditionKey` (see execution.runtime.ts), but the
- * shared WorkflowGraph type does not declare it yet. Fixtures extend the node
- * data locally instead of widening the shared type.
- */
-type RuntimeConditionData = GraphNode["data"] & { conditionKey?: string };
-
 export interface ExecutionGraphCase {
   name: string;
   graph: WorkflowGraph;
@@ -18,8 +9,6 @@ export interface ExecutionGraphCase {
 
 /**
  * Minimal linear graph: trigger -> task.
- * No condition, no config, single outgoing edge — the smallest graph the
- * runtime can complete.
  */
 export function linearGraphCase(): ExecutionGraphCase {
   return {
@@ -48,10 +37,8 @@ export function linearGraphCase(): ExecutionGraphCase {
 }
 
 /**
- * Condition graph with both branches present, as the validator requires.
- * The runtime selects the branch from `expectedHandle` via the boolean input.
- * `conditionKey` is required by the runtime; without it the run fails with
- * CONDITION_NOT_CONFIGURED.
+ * Condition graph using the canonical `data.config` clause format.
+ * Both condition branches must exist, even though only one is traversed.
  */
 export function conditionGraphCase(
   branch: "true" | "false",
@@ -80,8 +67,15 @@ export function conditionGraphCase(
           data: {
             type: "condition",
             label: "Payment approved?",
-            conditionKey: "approved",
-          } as RuntimeConditionData,
+            config: {
+              type: "clause",
+              clause: {
+                left: "approved",
+                op: "equals",
+                right: true,
+              },
+            },
+          },
         },
         {
           id: "task-true",
