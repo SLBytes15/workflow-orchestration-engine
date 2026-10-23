@@ -54,14 +54,48 @@ const nodeResultSchema = new Schema(
   { _id: false },
 );
 
+const compensationStatuses = ["pending", "running", "completed", "failed"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isValidCompensationTimestamp(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  return value instanceof Date && Number.isFinite(value.getTime());
+}
+
+function isValidCompensation(value: unknown): boolean {
+  if (!isRecord(value) || !compensationStatuses.includes(value.status as string)) {
+    return false;
+  }
+
+  if (
+    !isValidCompensationTimestamp(value.startedAt) ||
+    !isValidCompensationTimestamp(value.completedAt)
+  ) {
+    return false;
+  }
+
+  if (
+    value.error != null &&
+    (!isRecord(value.error) ||
+      typeof value.error.code !== "string" ||
+      value.error.code.length === 0 ||
+      typeof value.error.message !== "string" ||
+      value.error.message.length === 0)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 const validateNodeResults = (nodeResults: unknown[]) => {
   const nodeStatuses = ["completed", "failed", "skipped"];
-  const compensationStatuses = [
-    "pending",
-    "running",
-    "completed",
-    "failed",
-  ];
 
   return nodeResults.every((result) => {
     if (result === null || typeof result !== "object" || Array.isArray(result)) {
@@ -81,18 +115,10 @@ const validateNodeResults = (nodeResults: unknown[]) => {
     }
 
     if (nodeResult.compensation != null) {
-      if (
-        typeof nodeResult.compensation !== "object" ||
-        Array.isArray(nodeResult.compensation)
-      ) {
-        return false;
-      }
 
-      const compensationStatus = nodeResult.compensation.status;
-      if (
-        compensationStatus !== undefined &&
-        !compensationStatuses.includes(compensationStatus as string)
-      ) {
+      if (!isValidCompensation(nodeResult.compensation)) {
+  return false;
+}
         return false;
       }
     }
@@ -169,12 +195,6 @@ const workflowExecutionSchema = new Schema(
 
 workflowExecutionSchema.pre("validate", function () {
   const nodeStatuses = ["completed", "failed", "skipped"];
-  const compensationStatuses = [
-    "pending",
-    "running",
-    "completed",
-    "failed",
-  ];
 
   for (const [index, result] of (this.nodeResults ?? []).entries()) {
     if (result === null || typeof result !== "object" || Array.isArray(result)) {
@@ -192,24 +212,12 @@ workflowExecutionSchema.pre("validate", function () {
     }
 
     const compensation = result.compensation;
-    if (compensation != null) {
-      if (
-        typeof compensation !== "object" ||
-        Array.isArray(compensation)
-      ) {
-        this.invalidate(
-          `nodeResults.${index}.compensation`,
-          "Compensation metadata must be an object",
-        );
-      } else if (
-        compensation.status !== undefined &&
-        !compensationStatuses.includes(compensation.status)
-      ) {
-        this.invalidate(
-          `nodeResults.${index}.compensation.status`,
-          `Unsupported compensation status: ${compensation.status}`,
-        );
-      }
+if (compensation != null && !isValidCompensation(compensation)) {
+  this.invalidate(
+    `nodeResults.${index}.compensation`,
+    "Compensation metadata is invalid.",
+  );
+}
     }
   }
 });
