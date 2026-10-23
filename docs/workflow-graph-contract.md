@@ -61,6 +61,23 @@ type TaskConfig =
   | { action: "dbQuery";   connection: string; query: string; params?: unknown[] }
   | { action: "transform"; expression: string };
 
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+type TaskCompensation =
+  | { compensationAction?: never; compensationConfig?: never }
+  | {
+      compensationAction: string;
+      compensationConfig?: { [key: string]: JsonValue };
+    };
+
+type ExecutableTaskConfig = TaskConfig & TaskCompensation;
+
 // Optional task-level controls (apply to any action):
 interface TaskExtras {
   retry?: { attempts: number; backoffMs: number };
@@ -176,6 +193,28 @@ interface ExecutionSpec {
   steps: ExecutionStep[];
 }
 ```
+
+For synchronous Saga v1, a configured task may add `compensationAction` and
+optionally `compensationConfig`. The action identifier is resolved only through
+the code-owned compensation registry; graph data never supplies executable
+code. If compensation config is omitted, the handler receives an empty object.
+Any supplied compensation config must be a plain JSON object. A task with a
+compensation identifier that is not registered is rejected before its task
+handler runs.
+
+Registered compensation handlers receive a context containing the execution,
+workflow, node, and trusted tenant IDs; the task action identifier; validated
+task and compensation configs; and the successfully recorded task output
+(`undefined` when no valid output was recorded). Only completed tasks with
+registered compensation handlers are compensated, in reverse task-completion
+order. Compensation errors are stored on the node separately from the original
+execution error. JSON outputs are limited to null, booleans, finite numbers,
+strings, dense arrays, and plain objects containing only those values.
+
+This synchronous slice does not implement retries, crash recovery, automatic
+replay, or exactly-once execution. A handler may have run when a terminal
+compensation checkpoint cannot be persisted; the runtime reports that ambiguity
+and does not replay the handler.
 
 ---
 

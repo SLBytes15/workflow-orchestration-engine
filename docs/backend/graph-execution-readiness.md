@@ -1,17 +1,14 @@
 # Graph Execution Readiness Audit
 
-Status: **audit only** — no contract, validator, schema, runtime or route change is
-included in this PR.
+Status: **historical baseline audit** for the repository state listed below.
 Author: Nithin
 Date: 19-Oct-2026 — revision 2
 Repository state audited: `78b3f42` (`origin/main`)
 Supersedes: revision 1 (18-Oct, commit `4695d4b`), written before
 `backend/src/services/execution.runtime.ts` existed.
 
-This note does not modify `docs/workflow-graph-contract.md` or
-`docs/backend/execution-contract.md`. It records what the code enforces at graph
-creation, what it enforces at execution, where those two disagree, and which
-fixtures the rest of the backend may rely on.
+The audit sections below describe the repository state on 19-Oct-2026. The
+follow-up implementation status is recorded in §12.
 
 ## 1. Files inspected
 
@@ -168,3 +165,43 @@ success without durable processing.
 
 No frontend change, no graph-contract or execution-contract edit, no validator,
 schema, route, service or runtime change, and no new dependency.
+
+## 12. Follow-up implementation status (23-Oct-2026)
+
+The historical findings above are superseded in part by the task-action runtime
+updates on `member/saransh`:
+
+- `POST /api/workflows/:workflowId/executions` reaches
+  `ExecutionService.startExecution`, which invokes `executeWorkflowGraph`
+  synchronously after tenant-scoped workflow lookup and execution creation.
+- Task nodes use the graph contract's `data.config.action` identifier and
+  action-specific config. Only documented action identifiers with code-owned
+  handlers dispatch; no handler code is accepted from graph data. Tasks without
+  action configuration retain traversal-only behavior.
+- The approved synchronous Saga v1 extension uses optional
+  `compensationAction` plus `compensationConfig` on the existing task config.
+  The config is optional when an action is declared and defaults to an empty
+  object; compensation IDs resolve through an explicitly code-registered
+  handler map.
+- Handler output is restricted to JSON-compatible values. If a side effect
+  succeeds but produces invalid output, its node remains marked completed and
+  the execution fails with `INVALID_ACTION_OUTPUT`; the node remains eligible
+  for its registered compensation handler.
+- Eligible completed tasks are compensated in reverse task-completion order.
+  The handler receives trusted execution/workflow/node/tenant IDs, validated
+  task and compensation config, and the recorded output. The original execution
+  error remains separate from each node's compensation error.
+- The service persists pending, running, and terminal compensation checkpoints
+  using tenant-, status-, and prior-node-results-scoped conditional updates.
+  A failed terminal checkpoint reports that the handler may have run and does
+  not claim success or automatically replay it.
+- Execution updates match tenant, execution ID, expected status, and the exact
+  prior node-results snapshot. This is a conditional write guard, not a
+  cross-process recovery or exactly-once guarantee.
+- The graph validator and its rules are unchanged.
+
+No domain-specific handlers are registered by the default route service yet.
+There is no queue, automatic retry, crash recovery, or replay. A crash after a
+side effect and before its result is persisted can leave an action outcome
+uncertain. If MongoDB is unavailable, a terminal execution state cannot be
+guaranteed.
