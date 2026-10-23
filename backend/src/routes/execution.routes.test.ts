@@ -12,6 +12,7 @@ import {
 import { ExecutionServiceError } from "../services/execution.service";
 
 const tenantId = new Types.ObjectId();
+const otherTenantId = new Types.ObjectId();
 const executionId = new Types.ObjectId();
 const workflowId = new Types.ObjectId();
 
@@ -24,22 +25,23 @@ let receivedLimit: unknown;
 let receivedCursor: unknown;
 
 let mode: "normal" | "execution-error" | "not-found" = "normal";
+let historyRecords: Record<string, any>[] = [];
 
 let receivedInput: Record<string, unknown> | undefined;
 
 const resolver: TenantResolver = {
   async resolverTenant(apiKey: string) {
-    if (apiKey !== "valid-test-key") return null;
+    if (apiKey !== "valid-test-key" && apiKey !== "other-test-key") return null;
 
     return {
-      tenantId,
+      tenantId: apiKey === "valid-test-key" ? tenantId : otherTenantId,
     } as NonNullable<
       Awaited<ReturnType<TenantResolver["resolverTenant"]>>
     >;
   },
 };
 
-const execution = {
+const execution: Record<string, any> = {
   _id: executionId,
   tenantId,
   workflowId,
@@ -107,7 +109,7 @@ const service = {
       throw new Error("private-db-secret internal stack details");
     }
 
-    if (mode === "not-found") {
+    if (mode === "not-found" || !tenant.equals(tenantId)) {
       throw new ExecutionServiceError(
         404,
         "EXECUTION_NOT_FOUND",
@@ -138,7 +140,7 @@ const service = {
     }
 
     return {
-      executions: [],
+      executions: tenant.equals(tenantId) ? historyRecords : [],
       pagination: {
         limit: limit === undefined ? 20 : Number(limit),
         hasMore: false,
@@ -186,6 +188,12 @@ function resetState() {
   receivedLimit = undefined;
   receivedCursor = undefined;
   receivedInput = undefined;
+  historyRecords = [];
+  execution.status = "completed";
+  execution.error = null;
+  execution.nodeResults = [
+    { nodeId: "trigger-1", status: "completed" },
+  ];
   mode = "normal";
 }
 
@@ -396,4 +404,267 @@ test("does not expose internal details for unexpected errors", async () => {
   assert.ok(!body.includes("private-db-secret"));
   assert.ok(!body.includes("stack details"));
   assert.ok(body.includes("INTERNAL_SERVER_ERROR"));
+});
+test("returns all defined Saga execution statuses and separates original and compensation errors", async () => {
+  const originalError = {
+    code: "EXECUTION_FAILED",
+    message: "The workflow step failed",
+    details: { nodeId: "node-1" },
+  };
+  const compensationError = {
+    code: "COMPENSATION_FAILED",
+    message: "Rollback failed",
+  };
+
+  const cases = [
+    { status: "compensating", compensationStatus: "running" },
+    { status: "compensated", compensationStatus: "completed" },
+    { status: "compensation_failed", compensationStatus: "failed" },
+  ];
+
+  for (const item of cases) {
+    resetState();
+    execution.status = item.status;
+    execution.error =
+      item.status === "compensation_failed" ? originalError : null;
+    execution.nodeResults = [{
+      nodeId: "node-1",
+      status: "completed",
+      compensation: {
+        status: item.compensationStatus,
+        startedAt: "2026-10-22T10:00:00.000Z",
+        completedAt:
+          item.compensationStatus === "running"
+            ? null
+            : "2026-10-22T10:00:01.000Z",
+        error:
+          item.compensationStatus === "failed"
+            ? compensationError
+            : null,
+      },
+    }];
+
+    const response = await fetch(
+      `${baseUrl}/api/executions/${executionId}`,
+      { headers: authHeaders() },
+    );
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.execution.status, item.status);
+    assert.equal(
+      body.execution.nodeResults[0].compensation.status,
+      item.compensationStatus,
+    );
+
+    if (item.status === "compensation_failed") {
+      assert.deepEqual(body.execution.error, originalError);
+      assert.deepEqual(
+        body.execution.nodeResults[0].compensation.error,
+        compensationError,
+      );
+      assert.notDeepEqual(
+        body.execution.error,
+        body.execution.nodeResults[0].compensation.error,
+      );
+    }
+  }
+});
+
+test("retrieves legacy execution details without compensation metadata", async () => {
+  resetState();
+  execution.nodeResults = [
+    {
+      nodeId: "legacy-task",
+      status: "completed",
+      output: { ok: true },
+    },
+  ];
+
+  const response = await fetch(
+    `${baseUrl}/api/executions/${executionId}`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.execution.status, "completed");
+  assert.deepEqual(body.execution.nodeResults, [
+    {
+      nodeId: "legacy-task",
+      status: "completed",
+      output: { ok: true },
+    },
+  ]);
+  assert.equal(
+    Object.hasOwn(body.execution.nodeResults[0], "compensation"),
+    false,
+  );
+});
+
+test("returns Saga and legacy records in execution history", async () => {
+  resetState();
+
+  historyRecords = [
+    {
+      ...execution,
+      _id: new Types.ObjectId(),
+      status: "compensating",
+      error: null,
+      nodeResults: [{
+        nodeId: "task-a",
+        status: "completed",
+        compensation: {
+          status: "running",
+          startedAt: new Date("2026-10-22T10:00:00.000Z"),
+          completedAt: null,
+          error: null,
+        },
+      }],
+    },
+    {
+      ...execution,
+      _id: new Types.ObjectId(),
+      status: "compensated",
+      error: null,
+      nodeResults: [{
+        nodeId: "task-b",
+        status: "completed",
+        compensation: {
+          status: "completed",
+          startedAt: new Date("2026-10-22T10:00:00.000Z"),
+          completedAt: new Date("2026-10-22T10:00:01.000Z"),
+          error: null,
+        },
+      }],
+    },
+    {
+      ...execution,
+      _id: new Types.ObjectId(),
+      status: "compensation_failed",
+      error: { code: "EXECUTION_FAILED", message: "Task failed" },
+      nodeResults: [{
+        nodeId: "task-c",
+        status: "completed",
+        compensation: {
+          status: "failed",
+          startedAt: new Date("2026-10-22T10:00:00.000Z"),
+          completedAt: new Date("2026-10-22T10:00:01.000Z"),
+          error: { code: "COMPENSATION_FAILED", message: "Rollback failed" },
+        },
+      }],
+    },
+    {
+      ...execution,
+      _id: new Types.ObjectId(),
+      status: "completed",
+      error: null,
+      nodeResults: [{ nodeId: "legacy-task", status: "completed" }],
+    },
+  ];
+
+  const response = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.message, "Execution history retrieved successfully");
+  assert.deepEqual(
+    body.executions.map((item: any) => item.status),
+    ["compensating", "compensated", "compensation_failed", "completed"],
+  );
+  assert.equal(body.executions[0].nodeResults[0].compensation.status, "running");
+  assert.equal(body.executions[1].nodeResults[0].compensation.status, "completed");
+  assert.deepEqual(body.executions[2].error, {
+    code: "EXECUTION_FAILED",
+    message: "Task failed",
+  });
+  assert.deepEqual(body.executions[2].nodeResults[0].compensation.error, {
+    code: "COMPENSATION_FAILED",
+    message: "Rollback failed",
+  });
+  assert.equal(
+    Object.hasOwn(body.executions[3].nodeResults[0], "compensation"),
+    false,
+  );
+  assert.deepEqual(body.pagination, {
+    limit: 20,
+    hasMore: false,
+    nextCursor: null,
+  });
+});
+
+test("does not return another tenant's execution details or compensation metadata", async () => {
+  resetState();
+  execution.status = "compensation_failed";
+  execution.error = {
+    code: "PRIVATE_TASK_ERROR",
+    message: "Private task error",
+  };
+  execution.nodeResults = [{
+    nodeId: "private-task",
+    status: "completed",
+    compensation: {
+      status: "failed",
+      startedAt: new Date(),
+      completedAt: new Date(),
+      error: {
+        code: "PRIVATE_UNDO_ERROR",
+        message: "Private compensation error",
+      },
+    },
+  }];
+
+  const response = await fetch(
+    `${baseUrl}/api/executions/${executionId}`,
+    { headers: { "x-api-key": "other-test-key" } },
+  );
+
+  assert.equal(response.status, 404);
+  assert.equal(receivedTenantId, String(otherTenantId));
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "EXECUTION_NOT_FOUND",
+      message: "Execution not found",
+    },
+  });
+});
+
+test("does not return another tenant's execution history or compensation metadata", async () => {
+  resetState();
+  historyRecords = [{
+    ...execution,
+    status: "compensation_failed",
+    error: { code: "PRIVATE_TASK_ERROR", message: "Private task error" },
+    nodeResults: [{
+      nodeId: "private-task",
+      status: "completed",
+      compensation: {
+        status: "failed",
+        startedAt: new Date(),
+        completedAt: new Date(),
+        error: {
+          code: "PRIVATE_UNDO_ERROR",
+          message: "Private compensation error",
+        },
+      },
+    }],
+  }];
+
+  const response = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    { headers: { "x-api-key": "other-test-key" } },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedTenantId, String(otherTenantId));
+  const body = await response.json();
+  assert.deepEqual(body.executions, []);
+  assert.deepEqual(body.pagination, {
+    limit: 20,
+    hasMore: false,
+    nextCursor: null,
+  });
 });
