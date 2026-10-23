@@ -89,7 +89,6 @@ const validateNodeResults = (nodeResults: unknown[]) => {
       }
 
       const compensationStatus = nodeResult.compensation.status;
-
       if (
         compensationStatus !== undefined &&
         !compensationStatuses.includes(compensationStatus as string)
@@ -193,7 +192,6 @@ workflowExecutionSchema.pre("validate", function () {
     }
 
     const compensation = result.compensation;
-
     if (compensation != null) {
       if (
         typeof compensation !== "object" ||

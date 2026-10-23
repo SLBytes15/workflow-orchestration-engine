@@ -159,82 +159,82 @@ describe("WorkflowExecution schema", () => {
     assert.equal(execution.completedAt, null);
   });
 
- it("accepts legacy node results without compensation metadata", async () => {
-  const execution = new WorkflowExecutionModel({
-    ...validExecution(),
-    nodeResults: [
-      { nodeId: "node-1", status: "completed" },
-      {
-        nodeId: "node-2",
-        status: "failed",
-        error: { code: "NODE_FAILED", message: "Node failed" },
-      },
-    ],
-  });
-
-  await assert.doesNotReject(execution.validate());
-  assert.equal(execution.nodeResults[0].compensation, undefined);
-});
-
-it("accepts nested compensation metadata", async () => {
-  const execution = new WorkflowExecutionModel({
-    ...validExecution(),
-    status: "compensating",
-    nodeResults: [
-      {
-        nodeId: "node-1",
-        status: "completed",
-        output: { reference: "example" },
-        compensation: {
-          status: "running",
-          startedAt: new Date("2026-10-22T10:00:00.000Z"),
-          completedAt: null,
-          error: null,
+  it("accepts legacy node results without compensation metadata", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      nodeResults: [
+        { nodeId: "node-1", status: "completed" },
+        {
+          nodeId: "node-2",
+          status: "failed",
+          error: { code: "NODE_FAILED", message: "Node failed" },
         },
-      },
-    ],
+      ],
+    });
+
+    await assert.doesNotReject(execution.validate());
+    assert.equal(execution.nodeResults[0].compensation, undefined);
   });
 
-  await assert.doesNotReject(execution.validate());
-  assert.equal(
-    execution.nodeResults[0].compensation.status,
-    "running",
-  );
-});
+  it("accepts nested compensation metadata", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      status: "compensating",
+      nodeResults: [
+        {
+          nodeId: "node-1",
+          status: "completed",
+          output: { reference: "example" },
+          compensation: {
+            status: "running",
+            startedAt: new Date("2026-10-22T10:00:00.000Z"),
+            completedAt: null,
+            error: null,
+          },
+        },
+      ],
+    });
 
-it("diagnoses unsupported node-result and compensation statuses", async () => {
-  const invalidNodeResult = new WorkflowExecutionModel({
-    ...validExecution(),
-    nodeResults: [{ nodeId: "node-1", status: "interrupted" }],
+    await assert.doesNotReject(execution.validate());
+    assert.equal(
+      execution.nodeResults[0].compensation.status,
+      "running",
+    );
   });
 
-  const invalidCompensation = new WorkflowExecutionModel({
-    ...validExecution(),
-    nodeResults: [
-      {
-        nodeId: "node-1",
-        status: "completed",
-        compensation: { status: "interrupted" },
-      },
-    ],
+  it("diagnoses unsupported node-result and compensation statuses", async () => {
+    const invalidNodeResult = new WorkflowExecutionModel({
+      ...validExecution(),
+      nodeResults: [{ nodeId: "node-1", status: "interrupted" }],
+    });
+
+    const invalidCompensation = new WorkflowExecutionModel({
+      ...validExecution(),
+      nodeResults: [
+        {
+          nodeId: "node-1",
+          status: "completed",
+          compensation: { status: "interrupted" },
+        },
+      ],
+    });
+
+    const nodeResultError = await invalidNodeResult
+      .validate()
+      .then(() => null)
+      .catch((error: unknown) => error);
+
+    const compensationError = await invalidCompensation
+      .validate()
+      .then(() => null)
+      .catch((error: unknown) => error);
+
+    assert.ok(nodeResultError, "Expected invalid node status to fail validation");
+    assert.ok(
+      compensationError,
+      "Expected invalid compensation status to fail validation",
+    );
   });
-
-  const nodeResultError = await invalidNodeResult
-    .validate()
-    .then(() => null)
-    .catch((error: unknown) => error);
-
-  const compensationError = await invalidCompensation
-    .validate()
-    .then(() => null)
-    .catch((error: unknown) => error);
-
-  assert.ok(nodeResultError, "Expected invalid node status to fail validation");
-  assert.ok(
-    compensationError,
-    "Expected invalid compensation status to fail validation",
-  );
-});
 
   it("accepts the supported execution statuses", async () => {
     for (const status of [
@@ -264,7 +264,30 @@ it("diagnoses unsupported node-result and compensation statuses", async () => {
     await assert.rejects(execution.validate());
   });
 
-  
+  it("accepts compensation metadata and rejects unsupported compensation states", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      status: "compensating",
+      nodeResults: [
+        {
+          nodeId: "task-a",
+          status: "completed",
+          compensation: {
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            error: null,
+          },
+        },
+      ],
+    });
+
+    await assert.doesNotReject(execution.validate());
+
+    execution.nodeResults[0].compensation.status = "interrupted";
+    await assert.rejects(execution.validate());
+  });
+
   it("preserves the original execution error separately when compensation fails", async () => {
     const originalError = {
       code: "EXECUTION_FAILED",
@@ -276,7 +299,6 @@ it("diagnoses unsupported node-result and compensation statuses", async () => {
       code: "COMPENSATION_FAILED",
       message: "Rollback failed",
     };
-
     const execution = new WorkflowExecutionModel({
       ...validExecution(),
       status: "compensation_failed",
@@ -284,13 +306,11 @@ it("diagnoses unsupported node-result and compensation statuses", async () => {
       nodeResults: [
         {
           nodeId: "node-1",
-          status: "failed",
-          error: {
-            code: "NODE_FAILED",
-            message: "The workflow step failed",
-          },
+          status: "completed",
           compensation: {
             status: "failed",
+            startedAt: new Date(),
+            completedAt: new Date(),
             error: compensationError,
           },
         },
@@ -298,11 +318,7 @@ it("diagnoses unsupported node-result and compensation statuses", async () => {
     });
 
     await assert.doesNotReject(execution.validate());
-
-    // The original execution error must remain unchanged.
     assert.deepEqual(execution.error, originalError);
-
-    // The compensation failure must be recorded separately.
     assert.deepEqual(
       execution.nodeResults[0].compensation.error,
       compensationError,
