@@ -248,6 +248,48 @@ Node-level statuses are distinct from execution-level statuses.
 
 **Unresolved:** Whether node results are currently schema-validated, how conditional branches represent skipped nodes, how outputs are size-limited, and how sensitive data is redacted.
 
+## Execution Statuses and Compensation Fields
+
+### Execution statuses
+
+The execution model defines these statuses:
+
+- `queued` — execution record is initially queued.
+- `running` — execution is in progress.
+- `completed` — workflow execution completed successfully.
+- `failed` — workflow execution failed.
+- `compensating` — Saga compensation is in progress.
+- `compensated` — compensation completed.
+- `compensation_failed` — at least one compensation action failed.
+
+The runtime checkpoints compensation progress using the `compensating` status and returns either `compensated` or `compensation_failed` as its terminal compensation result.
+
+### Node results and compensation metadata
+
+Node results support the statuses `completed`, `failed`, and `skipped`. A node result may contain:
+
+- `nodeId` — identifier of the workflow node.
+- `status` — node result status.
+- `output` — optional node output.
+- `error` — optional structured error containing `code` and `message`.
+- `compensation` — optional compensation metadata.
+
+Compensation metadata contains:
+
+- `status` — `pending`, `running`, `completed`, or `failed`.
+- `startedAt` — start timestamp, or `null`.
+- `completedAt` — completion timestamp, or `null`.
+- `error` — optional structured error containing `code` and `message`, or `null`.
+
+Task compensation is configured using `compensationAction` and optional `compensationConfig`. The runtime requires a registered compensation handler; an unregistered handler produces `COMPENSATION_ACTION_NOT_REGISTERED`.
+
+### API and compatibility notes
+
+The execution creation endpoint currently returns HTTP `200` and includes execution status and node results in its response. Execution history is retrieved through the workflow-scoped executions endpoint.
+
+The model retains the existing execution statuses `queued`, `running`, `completed`, and `failed`, while adding Saga-related statuses. Node-result and compensation statuses are separate enums; clients should not treat them as interchangeable.
+
+Focused runtime tests are in `backend/src/services/execution.runtime.test.ts`. The backend test script is `npm test` from the `backend` directory. Tests must be run before reporting their results.
 ## 9. Graph execution boundaries
 
 Graph validation and graph execution are separate responsibilities.
