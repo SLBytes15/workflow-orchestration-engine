@@ -208,61 +208,17 @@ describe("WorkflowExecution schema", () => {
       nodeResults: [{ nodeId: "node-1", status: "interrupted" }],
     });
 
-it("accepts Date compensation timestamps and optional null or absent values", async () => {
-  const execution = new WorkflowExecutionModel({
-    ...validExecution(),
-    nodeResults: [
-      {
-        nodeId: "task-with-dates",
-        status: "completed",
-        compensation: {
+    const invalidCompensation = new WorkflowExecutionModel({
+      ...validExecution(),
+      nodeResults: [
+        {
+          nodeId: "node-1",
           status: "completed",
-          startedAt: new Date("2026-10-22T10:00:00.000Z"),
-          completedAt: new Date("2026-10-22T10:01:00.000Z"),
+          compensation: { status: "interrupted" },
         },
-      },
-      {
-        nodeId: "task-with-null-dates",
-        status: "completed",
-        compensation: {
-          status: "pending",
-          startedAt: null,
-          completedAt: null,
-          error: null,
-        },
-      },
-      {
-        nodeId: "task-with-optional-dates",
-        status: "completed",
-        compensation: {
-          status: "pending",
-        },
-      },
-    ],
-  });
+      ],
+    });
 
-  await assert.doesNotReject(execution.validate());
-});
-
-it("diagnoses unsupported node-result and compensation statuses", async () => {
-  const invalidNodeResult = new WorkflowExecutionModel({
-    ...validExecution(),
-    nodeResults: [{ nodeId: "node-1", status: "interrupted" }],
-  });
-
-  const invalidCompensation = new WorkflowExecutionModel({
-    ...validExecution(),
-    nodeResults: [
-      {
-        nodeId: "node-1",
-        status: "completed",
-        compensation: { status: "interrupted" },
-      },
-    ],
-  });
-
-  // Keep the existing assertions below this point from your branch.
-});
     const nodeResultError = await invalidNodeResult
       .validate()
       .then(() => null)
@@ -278,6 +234,42 @@ it("diagnoses unsupported node-result and compensation statuses", async () => {
       compensationError,
       "Expected invalid compensation status to fail validation",
     );
+  });
+
+  it("accepts Date compensation timestamps and optional null or absent values", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      nodeResults: [
+        {
+          nodeId: "task-with-dates",
+          status: "completed",
+          compensation: {
+            status: "completed",
+            startedAt: new Date("2026-10-22T10:00:00.000Z"),
+            completedAt: new Date("2026-10-22T10:01:00.000Z"),
+          },
+        },
+        {
+          nodeId: "task-with-null-dates",
+          status: "completed",
+          compensation: {
+            status: "pending",
+            startedAt: null,
+            completedAt: null,
+            error: null,
+          },
+        },
+        {
+          nodeId: "task-with-optional-dates",
+          status: "completed",
+          compensation: {
+            status: "pending",
+          },
+        },
+      ],
+    });
+
+    await assert.doesNotReject(execution.validate());
   });
 
   it("accepts the supported execution statuses", async () => {

@@ -31,7 +31,19 @@ function WorkflowCard({
 }: WorkflowCardProps) {
   return (
     <article className="workflow-card">
-      <div className="workflow-card__content">
+      <div
+        className={`workflow-card__content${onOpen ? " workflow-card__content--open" : ""}`}
+        role={onOpen ? "button" : undefined}
+        tabIndex={onOpen ? 0 : undefined}
+        aria-label={onOpen ? `Open workflow: ${name}` : undefined}
+        onClick={onOpen}
+        onKeyDown={(event) => {
+          if (onOpen && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            onOpen();
+          }
+        }}
+      >
         <div className="workflow-card__heading">
           <h2>{name}</h2>
 

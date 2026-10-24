@@ -86,7 +86,7 @@ function App() {
                 openedWorkflow ? String(openedWorkflow.id) : undefined
               }
               workflowName={openedWorkflow?.name}
-              initialGraph={openedWorkflow?.graph ?? null}
+              initialGraph={openedWorkflow ? openedWorkflow.graph ?? null : workflowGraph}
               onGraphChange={handleGraphChange}
               onSaveGraph={
                 openedWorkflow && tenantApiKey

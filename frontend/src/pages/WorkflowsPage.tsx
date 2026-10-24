@@ -360,7 +360,7 @@ function WorkflowsPage({
       const execution = await startExecution(
         String(workflow.id),
         tenantApiKey,
-        { approved: true },
+        { approved: true, paymentMethod: "card" },
       );
       setLastExecution(execution);
 

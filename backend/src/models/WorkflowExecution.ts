@@ -115,10 +115,7 @@ const validateNodeResults = (nodeResults: unknown[]) => {
     }
 
     if (nodeResult.compensation != null) {
-
       if (!isValidCompensation(nodeResult.compensation)) {
-  return false;
-}
         return false;
       }
     }
@@ -212,12 +209,11 @@ workflowExecutionSchema.pre("validate", function () {
     }
 
     const compensation = result.compensation;
-if (compensation != null && !isValidCompensation(compensation)) {
-  this.invalidate(
-    `nodeResults.${index}.compensation`,
-    "Compensation metadata is invalid.",
-  );
-}
+    if (compensation != null && !isValidCompensation(compensation)) {
+      this.invalidate(
+        `nodeResults.${index}.compensation`,
+        "Compensation metadata is invalid.",
+      );
     }
   }
 });
