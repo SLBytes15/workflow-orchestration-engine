@@ -2,18 +2,39 @@ const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || "http://localhost:3000"
 ).replace(/\/+$/, "");
 
-export type ExecutionStatus = "queued" | "running" | "completed" | "failed";
+export type ExecutionStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "compensating"
+  | "compensated"
+  | "compensation_failed";
+
+export type CompensationStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type ExecutionError = {
+  code?: string;
+  message?: string;
+};
+
+export type ExecutionCompensation = {
+  status: CompensationStatus;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  error?: ExecutionError | null;
+};
 
 export type ExecutionNodeResult = {
   nodeId: string;
   status: "completed" | "failed" | "skipped";
   output?: unknown;
-  error?:
-    | {
-        code?: string;
-        message?: string;
-      }
-    | string;
+  error?: ExecutionError | string;
+  compensation?: ExecutionCompensation;
 };
 
 export type WorkflowExecution = {
@@ -24,18 +45,11 @@ export type WorkflowExecution = {
   status: ExecutionStatus;
   currentNodeId?: string | null;
   nodeResults?: ExecutionNodeResult[];
-  error?:
-    | {
-        code?: string;
-        message?: string;
-      }
-    | string
-    | null;
+  error?: ExecutionError | string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   createdAt?: string;
 };
-
 
 export async function startExecution(
   workflowId: string,
@@ -90,7 +104,6 @@ export async function startExecution(
   return execution as WorkflowExecution;
 }
 
-
 export async function getExecution(
   executionId: string,
   apiKey: string,
@@ -140,7 +153,6 @@ export async function getExecution(
 
   return execution as WorkflowExecution;
 }
-
 
 export type WorkflowExecutionHistory = {
   executions: WorkflowExecution[];
@@ -205,5 +217,3 @@ export async function getWorkflowExecutions(
 
   return payload;
 }
-
-
