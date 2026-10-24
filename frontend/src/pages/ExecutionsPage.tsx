@@ -56,6 +56,12 @@ function getStatusLabel(
       return 'Completed'
     case 'failed':
       return 'Failed'
+    case 'compensating':
+      return 'Compensating'
+    case 'compensated':
+      return 'Compensated'
+    case 'compensation_failed':
+      return 'Compensation failed'
     default:
       return 'Status unavailable'
   }
@@ -69,6 +75,9 @@ function getStatusClass(
     case 'running':
     case 'completed':
     case 'failed':
+    case 'compensating':
+    case 'compensated':
+    case 'compensation_failed':
       return `executions-page__status--${status}`
     default:
       return 'executions-page__status--unknown'
@@ -159,10 +168,7 @@ function ExecutionsPage({
       } catch (error) {
         if (!cancelled) {
           setWorkflowError(
-            getRequestError(
-              error,
-              'Unable to load saved workflows.',
-            ),
+            getRequestError(error, 'Unable to load saved workflows.'),
           )
         }
       } finally {
@@ -179,10 +185,10 @@ function ExecutionsPage({
     }
   }, [tenantApiKey])
 
-
   const loadHistory = useCallback(
     async (append: boolean, cursor?: string | null) => {
       const requestId = ++historyRequestId.current
+
       if (!tenantApiKey?.trim() || !selectedWorkflowId) {
         setExecutions([])
         setNextCursor(null)
@@ -211,7 +217,9 @@ function ExecutionsPage({
             ...(append && cursor ? { cursor } : {}),
           },
         )
+
         if (requestId !== historyRequestId.current) return
+
         setExecutions((current) => {
           if (!append) return result.executions
 
@@ -233,10 +241,7 @@ function ExecutionsPage({
         if (requestId !== historyRequestId.current) return
 
         setHistoryError(
-          getRequestError(
-            error,
-            'Unable to load execution history.',
-          ),
+          getRequestError(error, 'Unable to load execution history.'),
         )
       } finally {
         if (requestId === historyRequestId.current) {
@@ -244,7 +249,7 @@ function ExecutionsPage({
           setLoadingMore(false)
         }
       }
-      },
+    },
     [tenantApiKey, selectedWorkflowId],
   )
 
@@ -279,10 +284,7 @@ function ExecutionsPage({
       if (requestId !== detailsRequestId.current) return
 
       setDetailsError(
-        getRequestError(
-          error,
-          'Unable to load execution details.',
-        ),
+        getRequestError(error, 'Unable to load execution details.'),
       )
     } finally {
       if (requestId === detailsRequestId.current) {
@@ -335,9 +337,7 @@ function ExecutionsPage({
             setDetails(null)
             setDetailsError('')
           }}
-          disabled={
-            loadingWorkflows || workflows.length === 0
-          }
+          disabled={loadingWorkflows || workflows.length === 0}
         >
           {workflows.length === 0 && (
             <option value="">No saved workflows</option>
@@ -544,7 +544,7 @@ function ExecutionsPage({
 
             <button
               type="button"
-              onClick={() =>{
+              onClick={() => {
                 detailsRequestId.current += 1
                 setDetailsLoadingId('')
                 setDetails(null)
@@ -557,7 +557,13 @@ function ExecutionsPage({
 
           <p>
             <strong>Status:</strong>{' '}
-            {getStatusLabel(details.status)}
+            <span
+              className={`executions-page__status ${getStatusClass(
+                details.status,
+              )}`}
+            >
+              {getStatusLabel(details.status)}
+            </span>
           </p>
 
           <p>
@@ -598,6 +604,42 @@ function ExecutionsPage({
                           : node.error.message ?? '',
                       )}
                     </p>
+                  )}
+
+                  {node.compensation && (
+                    <div className="executions-page__compensation">
+                      <p>
+                        <strong>Compensation status:</strong>{' '}
+                        <span
+                          className={`executions-page__status executions-page__status--${node.compensation.status}`}
+                        >
+                          {node.compensation.status}
+                        </span>
+                      </p>
+
+                      {node.compensation.startedAt && (
+                        <p>
+                          <strong>Compensation started:</strong>{' '}
+                          {formatDate(node.compensation.startedAt)}
+                        </p>
+                      )}
+
+                      {node.compensation.completedAt && (
+                        <p>
+                          <strong>Compensation completed:</strong>{' '}
+                          {formatDate(node.compensation.completedAt)}
+                        </p>
+                      )}
+
+                      {node.compensation.error && (
+                        <p className="executions-page__error">
+                          Compensation error:{' '}
+                          {sanitizeErrorMessage(
+                            node.compensation.error.message ?? "Compensation failed.",
+                          )}
+                        </p>
+                      )}
+                    </div>
                   )}
 
                   {node.output !== undefined && (
