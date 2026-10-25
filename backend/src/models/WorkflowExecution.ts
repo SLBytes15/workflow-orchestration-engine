@@ -65,40 +65,47 @@ const workflowExecutionSchema = new Schema(
       required: true,
       index: true,
     },
-
     workflowId: {
       type: Schema.Types.ObjectId,
       ref: "Workflow",
       required: true,
       index: true,
     },
-
     workflowVersion: {
       type: Number,
       required: true,
       min: 1,
     },
-
     status: {
       type: String,
-      enum: ["queued", "running", "completed", "failed"],
+      enum: [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "compensating",
+        "compensated",
+        "compensation_failed",
+      ],
       required: true,
       default: "queued",
     },
-
     graphSnapshot: {
       type: Schema.Types.Mixed,
       required: true,
     },
-
     currentNodeId: {
       type: String,
       default: null,
     },
-
     nodeResults: {
       type: [nodeResultSchema],
       default: [],
+      validate: {
+        validator: validateNodeResults,
+        message:
+          "Node results or compensation status is invalid.",
+      },
     },
 
     compensation: {
@@ -111,21 +118,45 @@ const workflowExecutionSchema = new Schema(
       type: Schema.Types.Mixed,
       default: null,
     },
-
     startedAt: {
       type: Date,
       default: null,
     },
-
     completedAt: {
       type: Date,
       default: null,
     },
   },
-  {
-    timestamps: true,
-  },
+  { timestamps: true },
 );
+
+workflowExecutionSchema.pre("validate", function () {
+  const nodeStatuses = ["completed", "failed", "skipped"];
+
+  for (const [index, result] of (this.nodeResults ?? []).entries()) {
+    if (result === null || typeof result !== "object" || Array.isArray(result)) {
+      continue;
+    }
+
+    if (
+      result.status !== undefined &&
+      !nodeStatuses.includes(result.status)
+    ) {
+      this.invalidate(
+        `nodeResults.${index}.status`,
+        `Unsupported node-result status: ${result.status}`,
+      );
+    }
+
+    const compensation = result.compensation;
+    if (compensation != null && !isValidCompensation(compensation)) {
+      this.invalidate(
+        `nodeResults.${index}.compensation`,
+        "Compensation metadata is invalid.",
+      );
+    }
+  }
+});
 
 workflowExecutionSchema.index({
   tenantId: 1,

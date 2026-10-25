@@ -1,5 +1,5 @@
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import WorkflowsPage from './pages/WorkflowsPage'
 import ExecutionsPage from './pages/ExecutionsPage'
 import Sidebar from './components/layout/Sidebar'
@@ -66,7 +66,10 @@ function App() {
     <div className="app-layout">
       <Sidebar
         activePage={activePage}
-        onNavigate={(page) => setActivePage(page as Page)}
+        onNavigate={(page) => {
+          setOpenedWorkflow(null)
+          setActivePage(page as Page)
+        }}
       />
 
       <main className="app">

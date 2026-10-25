@@ -47,7 +47,7 @@ Every tenant-owned database query must be scoped to the authenticated tenant. Re
 
 ### POST /api/workflows
 
-Accepts `name` and optional `description`.
+Accepts `name`, optional `description`, and a validated `graph`.
 
 - Reject client-supplied `tenantId`, `version`, and `status`.
 - The server assigns initial status `draft` and version `1`.
@@ -56,6 +56,26 @@ Accepts `name` and optional `description`.
 ### GET /api/workflows
 
 Returns only workflows owned by the authenticated tenant.
+
+### PUT /api/workflows/:workflowId/graph
+
+Replaces the graph for a workflow owned by the authenticated tenant.
+
+- Requires the tenant API-key authentication used by the other workflow routes.
+- Accepts only `{ "graph": WorkflowGraph }` and validates the existing graph
+  structure before updating.
+- The database update filters by both workflow ID and authenticated tenant ID.
+- Successful graph updates increment the workflow version.
+
+### DELETE /api/workflows/:workflowId
+
+Deletes a workflow owned by the authenticated tenant.
+
+- Requires the tenant API-key authentication used by the other workflow routes.
+- Validates the workflow ID before attempting deletion.
+- The database delete filters by both workflow ID and authenticated tenant ID.
+- Missing workflows and workflows owned by another tenant return the same
+  `404 WORKFLOW_NOT_FOUND` response.
 
 ## Decisions required before production authentication
 

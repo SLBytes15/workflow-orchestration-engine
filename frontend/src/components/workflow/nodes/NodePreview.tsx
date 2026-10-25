@@ -1,5 +1,11 @@
 
-import { useCallback, useEffect, useMemo } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import {
   addEdge,
   Background,
@@ -18,8 +24,31 @@ import TriggerNode from "./TriggerNode";
 import TaskNode from "./TaskNode";
 import ConditionNode from "./ConditionNode";
 import type { WorkflowGraph } from "../../../api/workflowApi";
+import {
+  CONDITION_OPERATOR_LABELS,
+  createConditionConfig,
+  createConditionConfigFromInput,
+  createConditionNode,
+  getConditionValueType,
+  getConditionConfigError,
+  hasValidConditionConfig,
+  parseConditionValue,
+  serializeWorkflowGraph,
+  summarizeCondition,
+  validateNodeLabel,
+  type ConditionConfig,
+  type ConditionNodeData,
+  type ConditionOp,
+  type ConditionValueType,
+  type WorkflowFlowNode,
+  withConditionConfig,
+  withNodeLabel,
+} from "./node.types";
 
 type NodePreviewProps = {
+  workflowId?: string;
+  workflowName?: string;
+  initialGraph?: WorkflowGraph | null;
   onGraphChange?: (graph: WorkflowGraph) => void;
   initialGraph?: WorkflowGraph | null;
   onSaveGraph?: (graph: WorkflowGraph) => void | Promise<void>;
@@ -44,7 +73,15 @@ const initialNodes: Node[] = [
     position: { x: 250, y: 180 },
     data: {
       type: "condition",
-      label: "Payment method",
+      label: "Order approved?",
+      config: {
+        type: "clause",
+        clause: {
+          left: "approved",
+          op: "equals",
+          right: true,
+        },
+      },
     },
   },
   {
@@ -111,31 +148,7 @@ function NodePreview({
   );
 
   const graphPayload: WorkflowGraph = useMemo(
-    () => ({
-      version: 1,
-      nodes: nodes.map((node) => ({
-        id: node.id,
-        type: node.type as "trigger" | "task" | "condition",
-        position: node.position,
-        data: {
-          ...node.data,
-          type: node.type as "trigger" | "task" | "condition",
-          label: String(node.data.label ?? ""),
-        },
-      })),
-      edges: edges.map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        ...(edge.sourceHandle !== null
-          ? { sourceHandle: edge.sourceHandle }
-          : {}),
-        ...(edge.targetHandle !== null
-          ? { targetHandle: edge.targetHandle }
-          : {}),
-        ...(edge.data !== undefined ? { data: edge.data } : {}),
-      })),
-    }),
+    () => serializeWorkflowGraph(nodes, edges),
     [nodes, edges],
   );
 
@@ -150,10 +163,93 @@ function NodePreview({
     [setEdges],
   );
 
+  const onAddCondition = useCallback(() => {
+    let index = 1;
+    while (nodes.some((node) => node.id === `condition-${index}`)) {
+      index += 1;
+    }
+    const id = `condition-${index}`;
+    setSelectedNodeId(id);
+    setNodes((currentNodes) => [
+      ...currentNodes,
+      createConditionNode(id, {
+        x: 250 + index * 30,
+        y: 180 + index * 30,
+      }),
+    ]);
+  }, [nodes, setNodes]);
+
+  function updateSelectedCondition(config: ConditionConfig) {
+    if (!selectedCondition) return;
+    setNodes((currentNodes) =>
+      currentNodes.map((node) =>
+        node.id === selectedCondition.id &&
+        node.type === "condition" &&
+        node.data.type === "condition"
+          ? withConditionConfig(node, config)
+          : node,
+      ),
+    );
+  }
+
+  function updateSelectedNodeLabel(label: string) {
+    if (!selectedNode) return;
+    setNodes((currentNodes) =>
+      currentNodes.map((node) =>
+        node.id === selectedNode.id ? withNodeLabel(node, label) : node,
+      ),
+    );
+  }
+
+  async function handleSaveGraph() {
+    if (!onSaveGraph || isSavingGraph) return;
+
+    const configError = getConditionConfigError(graphPayload);
+    if (configError) {
+      setSaveError(configError);
+      setSaveMessage("");
+      return;
+    }
+
+    setIsSavingGraph(true);
+    setSaveError("");
+    setSaveMessage("");
+    try {
+      await onSaveGraph(graphPayload);
+      setSaveMessage("Workflow graph saved successfully.");
+    } catch (error) {
+      setSaveError(
+        error instanceof Error ? error.message : "Unable to save workflow graph.",
+      );
+    } finally {
+      setIsSavingGraph(false);
+    }
+  }
+
   return (
     <section className="node-preview">
       <h2>Workflow Node Preview</h2>
+      {workflowId && (
+        <p role="status">
+          Editing saved workflow: {workflowName ?? "Untitled workflow"} (ID:{" "}
+          {workflowId})
+        </p>
+      )}
       <p>Connect nodes to preview your workflow structure.</p>
+      {onSaveGraph && (
+        <button
+          type="button"
+          onClick={() => void handleSaveGraph()}
+          disabled={isSavingGraph}
+        >
+          {isSavingGraph ? "Saving..." : "Save workflow changes"}
+        </button>
+      )}
+      {saveError && <p role="alert">{saveError}</p>}
+      {saveMessage && <p role="status">{saveMessage}</p>}
+      <button type="button" onClick={onAddCondition}>
+        Add condition node
+      </button>
 
       {onSaveGraph && (
         <div className="workflow-card__actions">
@@ -178,6 +274,9 @@ function NodePreview({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onNodeClick={(_event, node) => {
+            setSelectedNodeId(node.id);
+          }}
           fitView
         >
           <Background />
@@ -185,6 +284,20 @@ function NodePreview({
           <MiniMap />
         </ReactFlow>
       </div>
+      {selectedNode && (
+        <NodeLabelEditor
+          key={`label-${selectedNode.id}`}
+          node={selectedNode}
+          onApply={updateSelectedNodeLabel}
+        />
+      )}
+      {selectedCondition && (
+        <ConditionConfigEditor
+          key={selectedCondition.id}
+          data={selectedCondition.data as ConditionNodeData}
+          onApply={updateSelectedCondition}
+        />
+      )}
     </section>
   );
 }

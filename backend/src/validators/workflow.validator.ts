@@ -1,5 +1,6 @@
 import {
   validateWorkflowGraph,
+  validateConditionConfigurations,
   type WorkflowGraph,
 } from "./workflow-graph.validator";
 
@@ -69,9 +70,15 @@ export function validateCreateWorkflow(input: unknown): ValidationResult {
   if (body.graph === undefined) {
     errors.push("graph is required");
   } else {
-    errors.push(
-      ...validateWorkflowGraph(body.graph).map((error) => `graph: ${error}`),
-    );
+    const graphErrors = validateWorkflowGraph(body.graph);
+    errors.push(...graphErrors.map((error) => `graph: ${error}`));
+    if (graphErrors.length === 0) {
+      errors.push(
+        ...validateConditionConfigurations(body.graph).map(
+          (error) => `graph: ${error}`,
+        ),
+      );
+    }
   }
 
 

@@ -17,8 +17,56 @@ export type WorkflowGraph = {
     target: string
     sourceHandle?: string
     targetHandle?: string
-    data?: unknown
+    data?: Record<string, unknown>
   }>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function isWorkflowGraph(value: unknown): value is WorkflowGraph {
+  if (
+    !isRecord(value) ||
+    !('version' in value) ||
+    value.version !== 1 ||
+    !Array.isArray(value.nodes) ||
+    !Array.isArray(value.edges)
+  ) {
+    return false
+  }
+
+  return value.nodes.every(
+    (node) =>
+      isRecord(node) &&
+      typeof node.id === 'string' &&
+      node.id.trim().length > 0 &&
+      (node.type === 'trigger' ||
+        node.type === 'task' ||
+        node.type === 'condition') &&
+      isRecord(node.position) &&
+      typeof node.position.x === 'number' &&
+      Number.isFinite(node.position.x) &&
+      typeof node.position.y === 'number' &&
+      Number.isFinite(node.position.y) &&
+      isRecord(node.data) &&
+      node.data.type === node.type &&
+      typeof node.data.label === 'string',
+  ) && value.edges.every(
+    (edge) =>
+      isRecord(edge) &&
+      typeof edge.id === 'string' &&
+      edge.id.trim().length > 0 &&
+      typeof edge.source === 'string' &&
+      edge.source.trim().length > 0 &&
+      typeof edge.target === 'string' &&
+      edge.target.trim().length > 0 &&
+      (edge.sourceHandle === undefined ||
+        typeof edge.sourceHandle === 'string') &&
+      (edge.targetHandle === undefined ||
+        typeof edge.targetHandle === 'string') &&
+      (edge.data === undefined || isRecord(edge.data)),
+  )
 }
 
 export type CreateWorkflowRequest = {

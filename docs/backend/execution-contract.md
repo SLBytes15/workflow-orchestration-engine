@@ -29,9 +29,9 @@ The following files and behaviors have been observed in the repository:
 | Tenant-scoped retrieval | Service queries include `tenantId` alongside execution ID | Verified for the observed query |
 | Execution history | Service contains `listExecutions`, including limit and cursor handling | Verified: implementation exists |
 | API authentication | Execution routes use `requireTenantAuth` | Verified: middleware is referenced |
-| Full lifecycle enforcement | Not yet inspected | Unresolved |
-| Actual graph execution runtime | Not yet inspected | Unresolved |
-| Cross-tenant isolation tests | Not yet inspected | Unresolved |
+| Full lifecycle enforcement | Runtime and service tests cover task failure, compensation, checkpoint persistence, and terminal states | Verified for this synchronous slice |
+| Actual graph execution runtime | `startExecution` invokes `executeWorkflowGraph`; supported task actions are dispatched through a code-owned registry | Verified |
+| Cross-tenant isolation tests | Execution service queries scope workflow/execution IDs by tenant; service tests cover tenant scoping | Verified for observed service paths |
 
 These observations are not a claim that the full execution flow has been tested or is production-ready.
 
@@ -55,7 +55,11 @@ The execution model previously reviewed in this project contains the following f
 | `completedAt` | Records the execution completion time |
 | `createdAt`, `updatedAt` | Mongoose-managed timestamps |
 
-The model's observed lifecycle enum is `queued`, `running`, `completed`, and `failed`. The model also defines tenant-related indexes.
+The model lifecycle enum is `queued`, `running`, `completed`, `failed`,
+`compensating`, `compensated`, and `compensation_failed`. Per-node results may
+also contain compensation status, timestamps, and a structured compensation error.
+The model defines tenant-related indexes and validates supported execution,
+node-result, and compensation statuses.
 
 ### 3.2 Proposed record requirements
 
@@ -66,7 +70,7 @@ The model's observed lifecycle enum is `queued`, `running`, `completed`, and `fa
 5. Error details returned to clients must not expose secrets, stack traces, or private internal information.
 6. Timestamps must have consistent meanings across the service and API.
 
-**Unresolved:** Whether graph snapshots are immutable at the service layer, whether node results are validated, and whether error data is sanitized before persistence or response serialization.
+**Unresolved:** Whether graph snapshots remain immutable after persistence. Supported node and compensation states are validated, and runtime action errors use structured codes/messages.
 
 ## 4. Execution lifecycle
 
@@ -78,6 +82,9 @@ The model currently defines these states:
 - `running`
 - `completed`
 - `failed`
+- `compensating`
+- `compensated`
+- `compensation_failed`
 
 ### 4.2 Proposed lifecycle rules
 
@@ -87,12 +94,48 @@ The model currently defines these states:
 | `queued` | `failed` | Execution fails before or during startup |
 | `running` | `completed` | All required workflow work succeeds |
 | `running` | `failed` | Execution cannot continue successfully |
+| `running` | `compensating` | A task fails after eligible tasks completed |
+| `compensating` | `compensated` | All eligible compensations succeed |
+| `compensating` | `compensation_failed` | At least one compensation fails |
 | `completed` | None | Terminal state |
 | `failed` | None | Terminal state |
+| `compensated` | None | Terminal state |
+| `compensation_failed` | None | Terminal state |
 
-These transitions are proposed until service and runtime behavior has been verified.
+The synchronous Saga v1 runtime uses these compensation lifecycle states:
+`running` transitions to `compensating` when a task failure follows one or more
+eligible successful tasks. Each eligible node is persisted as `pending`, then
+`running` before its registered handler is invoked, then `completed` or
+`failed` after the handler returns or throws. The execution ends as
+`compensated` or `compensation_failed`. Each update is tenant-scoped and
+conditionally matches the expected status and exact prior `nodeResults`
+snapshot.
 
-The initial contract should not introduce `cancelled`, `paused`, `retrying`, or compensation-specific states without an explicit design decision.
+Task dispatch uses `data.config.action` plus its action-specific fields.
+`compensationAction` is optional, and `compensationConfig` is optional when an
+action is declared; if omitted, the registered handler receives an empty
+object. A compensation config without an action is invalid. Both task and
+compensation identifiers resolve only through code-owned registries; unknown
+compensation actions prevent the task handler from running. Compensation
+context includes trusted execution/workflow/node/tenant IDs, validated task
+and compensation configs, and the recorded task output. A missing or invalid
+task output is represented as `undefined` in that context; invalid action
+output fails execution while leaving the successful task eligible for
+compensation.
+
+The original task error remains in `execution.error`; each compensation error
+is recorded separately in its node's compensation metadata. Compensation runs
+in reverse task-completion order and includes only successfully completed
+tasks with registered compensation handlers. If a checkpoint fails, execution
+stops and the service reports the persistence failure. If the terminal
+checkpoint fails after a handler may have run, the last confirmed state is
+not advanced locally, no successful completion is claimed, and the database
+outcome may be uncertain. No replay is attempted.
+
+The runtime does not add `cancelled`, `paused`, `retrying`, automatic retries,
+crash recovery, or automatic replay of compensation left running. It does not
+claim exactly-once execution. If MongoDB is unavailable, the service cannot
+guarantee that an execution reaches a terminal persisted state.
 
 **Unresolved questions:**
 
@@ -205,6 +248,48 @@ Node-level statuses are distinct from execution-level statuses.
 
 **Unresolved:** Whether node results are currently schema-validated, how conditional branches represent skipped nodes, how outputs are size-limited, and how sensitive data is redacted.
 
+## Execution Statuses and Compensation Fields
+
+### Execution statuses
+
+The execution model defines these statuses:
+
+- `queued` — execution record is initially queued.
+- `running` — execution is in progress.
+- `completed` — workflow execution completed successfully.
+- `failed` — workflow execution failed.
+- `compensating` — Saga compensation is in progress.
+- `compensated` — compensation completed.
+- `compensation_failed` — at least one compensation action failed.
+
+The runtime checkpoints compensation progress using the `compensating` status and returns either `compensated` or `compensation_failed` as its terminal compensation result.
+
+### Node results and compensation metadata
+
+Node results support the statuses `completed`, `failed`, and `skipped`. A node result may contain:
+
+- `nodeId` — identifier of the workflow node.
+- `status` — node result status.
+- `output` — optional node output.
+- `error` — optional structured error containing `code` and `message`.
+- `compensation` — optional compensation metadata.
+
+Compensation metadata contains:
+
+- `status` — `pending`, `running`, `completed`, or `failed`.
+- `startedAt` — start timestamp, or `null`.
+- `completedAt` — completion timestamp, or `null`.
+- `error` — optional structured error containing `code` and `message`, or `null`.
+
+Task compensation is configured using `compensationAction` and optional `compensationConfig`. The runtime requires a registered compensation handler; an unregistered handler produces `COMPENSATION_ACTION_NOT_REGISTERED`.
+
+### API and compatibility notes
+
+The execution creation endpoint currently returns HTTP `200` and includes execution status and node results in its response. Execution history is retrieved through the workflow-scoped executions endpoint.
+
+The model retains the existing execution statuses `queued`, `running`, `completed`, and `failed`, while adding Saga-related statuses. Node-result and compensation statuses are separate enums; clients should not treat them as interchangeable.
+
+Focused runtime tests are in `backend/src/services/execution.runtime.test.ts`. The backend test script is `npm test` from the `backend` directory. Tests must be run before reporting their results.
 ## 9. Graph execution boundaries
 
 Graph validation and graph execution are separate responsibilities.
@@ -222,7 +307,9 @@ Before implementing or extending the runtime, confirm:
 
 Do not assume that graph validation proves that a graph can be executed correctly.
 
-Retries, Saga compensation, live updates, sandboxing, and advanced scheduling should remain outside the initial contract unless the official requirements or an approved design require them.
+Retries, live updates, sandboxing, and advanced scheduling remain outside this
+runtime slice. Saga compensation is limited to the explicitly approved
+synchronous v1 contract above.
 
 ## 10. Testing and acceptance criteria
 
@@ -273,4 +360,82 @@ Each member should report:
 7. Run the relevant build and tests and record the exact results.
 8. Update this document when decisions are confirmed.
 
+## 13. Minimal registered-action contract
+
+The existing graph contract defines task configs with an `action` discriminator
+and action-specific fields, for example:
+
+```ts
+{
+  action: "sendEmail",
+  to: "ops@example.test",
+  subject: "Order created",
+  body: "Order 42 was created",
+  cc: ["audit@example.test"]
+}
+```
+
+The runtime uses `config.action` as the registry key and passes the validated
+action-specific config to its code-owned handler. Only documented action IDs
+(`http`, `sendEmail`, `sendSlack`, `dbQuery`, and `transform`) are accepted.
+Unregistered handlers and unknown action IDs fail safely. Tasks without config
+remain traversal-only. A graph cannot provide handler implementations.
+
+Task inputs and outputs are JSON-compatible: null, booleans, finite numbers,
+strings, dense arrays, and plain objects containing only those values. Cycles,
+accessors, symbols, undefined, functions, non-finite numbers, and non-plain
+objects are rejected.
+
+The runtime's minimal TypeScript interfaces are:
+
+```ts
+type RegisteredActionIdentifier =
+  | "http" | "sendEmail" | "sendSlack" | "dbQuery" | "transform";
+type JsonValue =
+  | null | boolean | number | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+type ValidatedActionInput = Readonly<Record<string, JsonValue>>;
+
+interface StructuredActionError {
+  code: string;
+  message: string;
+}
+
+type ActionResult =
+  | { ok: true; output?: unknown }
+  | { ok: false; error: StructuredActionError };
+
+interface RegisteredAction {
+  execute(input: ValidatedActionInput): Promise<ActionResult>;
+}
+
+interface ActionRegistry {
+  taskActions: Readonly<Record<string, RegisteredAction>>;
+}
+```
+
+If a handler succeeds but returns invalid output, its node remains recorded as
+completed and the execution fails with `INVALID_ACTION_OUTPUT`. Thrown handler
+exceptions become a structured `ACTION_HANDLER_FAILED`. The service also maps
+an unexpected runtime exception to `RUNTIME_FAILED` and attempts to persist a
+failed terminal result. If that persistence write fails, it returns
+`EXECUTION_RESULT_PERSISTENCE_FAILED`; it does not fabricate a stored terminal
+state.
+
+**Compensation remains blocked:** The graph contract and the latest Saga
+readiness matrix do not approve how a task declares its compensation action or
+what input it receives. The runtime rejects a task config containing a
+`compensation` property with `COMPENSATION_CONFIG_UNAPPROVED`; it does not
+execute or persist compensation progress. Resolve this contract before
+implementing compensation handlers. Do not infer compensation mapping from a
+task action.
+
+The default route service has no domain handlers registered. Register concrete
+handlers only after action-specific validation is agreed. The runtime remains
+synchronous and adds no queue, retry, recovery, or replay semantics; it makes
+no exactly-once claim.
+
 **Current decision:** This document is a working contract, not proof that every proposed behavior already exists. The next step is to verify the implementation and resolve the explicitly unresolved items before treating the contract as final.
+**Implementation update:** Section 13 reflects the current runtime and identifies
+the unresolved compensation declaration contract.

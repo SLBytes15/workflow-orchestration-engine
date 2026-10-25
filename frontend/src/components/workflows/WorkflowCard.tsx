@@ -1,4 +1,5 @@
 import './WorkflowCard.css'
+import { isRunButtonDisabled } from "../../workflowState";
 
 type WorkflowStatus = 'Active' | 'Draft' | 'Paused'
 
@@ -8,6 +9,9 @@ type WorkflowCardProps = {
   status: WorkflowStatus;
   version: number;
   updatedAt?: string;
+  onOpen?: () => void;
+  onDelete?: () => void;
+  isDeleting?: boolean;
   onRun?: () => void;
   isRunning?: boolean;
   canRun?: boolean;
@@ -19,6 +23,9 @@ function WorkflowCard({
   status,
   version,
   updatedAt,
+  onOpen,
+  onDelete,
+  isDeleting = false,
   onRun,
   isRunning = false,
   canRun = false,
@@ -26,7 +33,19 @@ function WorkflowCard({
 }: WorkflowCardProps) {
   return (
     <article className="workflow-card">
-      <div className="workflow-card__content">
+      <div
+        className={`workflow-card__content${onOpen ? " workflow-card__content--open" : ""}`}
+        role={onOpen ? "button" : undefined}
+        tabIndex={onOpen ? 0 : undefined}
+        aria-label={onOpen ? `Open workflow: ${name}` : undefined}
+        onClick={onOpen}
+        onKeyDown={(event) => {
+          if (onOpen && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            onOpen();
+          }
+        }}
+      >
         <div className="workflow-card__heading">
           <h2>{name}</h2>
 
@@ -60,10 +79,24 @@ function WorkflowCard({
             type="button"
             className="workflow-card__run"
             onClick={onRun}
-            disabled={!canRun || isRunning}
+            disabled={isRunButtonDisabled(canRun, isRunning)}
             aria-label={`Run workflow: ${name}`}
           >
             {isRunning ? "Running..." : "Run workflow"}
+          </button>
+        </div>
+      )}
+
+      {onDelete && (
+        <div className="workflow-card__actions">
+          <button
+            type="button"
+            className="workflow-card__delete"
+            onClick={onDelete}
+            disabled={isDeleting}
+            aria-label={`Delete workflow: ${name}`}
+          >
+            {isDeleting ? "Deleting..." : "Delete workflow"}
           </button>
         </div>
       )}

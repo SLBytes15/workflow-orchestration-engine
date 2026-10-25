@@ -1,4 +1,4 @@
-import type { Types } from "mongoose";
+import { Types } from "mongoose";
 import WorkflowModel from "../models/workflow.model";
 import type { CreateWorkflowInput, UpdateWorkflowInput } from "../validators/workflow.validator";
 import type { WorkflowGraph } from "../validators/workflow-graph.validator";

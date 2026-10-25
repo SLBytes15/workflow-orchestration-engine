@@ -4,10 +4,19 @@ import WorkflowExecutionModel from "../models/WorkflowExecution";
 import type { WorkflowGraph } from "../validators/workflow-graph.validator";
 import {
   executeWorkflowGraph,
+  type ActionRegistry,
+  type RuntimeExecutionCheckpoint,
   type RuntimeExecutionResult,
 } from "./execution.runtime";
 
-type ExecutionStatus = "queued" | "running" | "completed" | "failed";
+type ExecutionStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "compensating"
+  | "compensated"
+  | "compensation_failed";
 
 type ExecutionUpdate = {
   status: ExecutionStatus;
@@ -17,6 +26,23 @@ type ExecutionUpdate = {
   startedAt?: Date | null;
   completedAt?: Date | null;
 };
+
+export function buildExecutionUpdateFilter(
+  tenantId: Types.ObjectId,
+  executionId: Types.ObjectId,
+  expectedStatus: ExecutionStatus,
+  expectedNodeResults?: RuntimeExecutionResult["nodeResults"],
+): Record<string, unknown> {
+  const filter: Record<string, unknown> = {
+    _id: executionId,
+    tenantId,
+    status: expectedStatus,
+  };
+  if (expectedNodeResults !== undefined) {
+    filter.nodeResults = expectedNodeResults;
+  }
+  return filter;
+}
 
 export class ExecutionServiceError extends Error {
   constructor(
@@ -30,6 +56,8 @@ export class ExecutionServiceError extends Error {
 }
 
 export interface ExecutionServiceDependencies {
+  actions?: ActionRegistry;
+
   findWorkflow(
     tenantId: Types.ObjectId,
     workflowId: Types.ObjectId,
@@ -41,6 +69,7 @@ export interface ExecutionServiceDependencies {
     tenantId: Types.ObjectId,
     executionId: Types.ObjectId,
     expectedStatus: ExecutionStatus,
+    expectedNodeResults: RuntimeExecutionResult["nodeResults"] | undefined,
     update: ExecutionUpdate,
   ): Promise<any>;
 
@@ -66,9 +95,20 @@ const databaseDependencies: ExecutionServiceDependencies = {
     return WorkflowExecutionModel.create(record);
   },
 
-  updateExecution(tenantId, executionId, expectedStatus, update) {
+  updateExecution(
+    tenantId,
+    executionId,
+    expectedStatus,
+    expectedNodeResults,
+    update,
+  ) {
     return WorkflowExecutionModel.findOneAndUpdate(
-      { _id: executionId, tenantId, status: expectedStatus },
+      buildExecutionUpdateFilter(
+        tenantId,
+        executionId,
+        expectedStatus,
+        expectedNodeResults,
+      ),
       { $set: update },
       { new: true, runValidators: true },
     )
@@ -109,20 +149,9 @@ function objectId(value: string, field: string): Types.ObjectId {
   return new (require("mongoose").Types.ObjectId)(value) as Types.ObjectId;
 }
 
-function toSafeFailure(result: RuntimeExecutionResult): ExecutionUpdate {
-  return {
-    status: "failed",
-    nodeResults: result.nodeResults,
-    error: result.error ?? {
-      code: "EXECUTION_FAILED",
-      message: "Workflow execution failed.",
-    },
-    completedAt: new Date(),
-  };
-}
-
 export function createExecutionService(
   dependencies: ExecutionServiceDependencies = databaseDependencies,
+  actions: ActionRegistry | undefined = dependencies.actions,
 ) {
   return {
     async startExecution(
@@ -161,6 +190,7 @@ export function createExecutionService(
         tenantId,
         executionId,
         "queued",
+        [],
         {
           status: "running",
           startedAt,
@@ -176,46 +206,127 @@ export function createExecutionService(
         );
       }
 
-      let result: RuntimeExecutionResult;
+      let persistedStatus: ExecutionStatus = "running";
+      let persistedNodeResults: RuntimeExecutionResult["nodeResults"] = [];
+      const getPersistedStatus = (): ExecutionStatus => persistedStatus;
+      const persistCheckpoint = async (
+        checkpoint: RuntimeExecutionCheckpoint,
+      ): Promise<void> => {
+        let saved;
+        try {
+          saved = await dependencies.updateExecution(
+            tenantId,
+            executionId,
+            persistedStatus,
+            persistedNodeResults,
+            {
+              status: checkpoint.status,
+              nodeResults: checkpoint.nodeResults,
+              error: checkpoint.error,
+            },
+          );
+        } catch {
+          throw new ExecutionServiceError(
+            500,
+            "COMPENSATION_CHECKPOINT_FAILED",
+            checkpoint.stage === "terminal"
+              ? "A compensation handler may have run, but its terminal checkpoint could not be confirmed. Do not assume it succeeded; compensation will not be replayed automatically."
+              : "Unable to persist the compensation checkpoint. No automatic compensation replay will be attempted.",
+          );
+        }
+        if (!saved) {
+          throw new ExecutionServiceError(
+            500,
+            "COMPENSATION_CHECKPOINT_FAILED",
+            checkpoint.stage === "terminal"
+              ? "A compensation handler may have run, but its terminal checkpoint could not be confirmed. Do not assume it succeeded; compensation will not be replayed automatically."
+              : "Unable to persist the compensation checkpoint. No automatic compensation replay will be attempted.",
+          );
+        }
+        if (
+          saved.status !== checkpoint.status ||
+          !Array.isArray(saved.nodeResults)
+        ) {
+          throw new ExecutionServiceError(
+            500,
+            "COMPENSATION_CHECKPOINT_FAILED",
+            checkpoint.stage === "terminal"
+              ? "A compensation handler may have run, but its terminal checkpoint could not be confirmed. Do not assume it succeeded; compensation will not be replayed automatically."
+              : "The compensation checkpoint response did not confirm the persisted state. No automatic replay will be attempted.",
+          );
+        }
+        persistedStatus = saved.status as ExecutionStatus;
+        persistedNodeResults =
+          saved.nodeResults as RuntimeExecutionResult["nodeResults"];
+      };
 
+      let result: RuntimeExecutionResult;
       try {
         result = await executeWorkflowGraph(
           runningExecution.graphSnapshot as WorkflowGraph,
           input,
+          actions,
+          {
+            executionId: String(executionId),
+            workflowId: String(workflowId),
+            tenantId: String(tenantId),
+          },
+          persistCheckpoint,
         );
-      } catch {
+      } catch (error) {
+        if (error instanceof ExecutionServiceError) {
+          throw error;
+        }
+        if (getPersistedStatus() === "compensating") {
+          throw new ExecutionServiceError(
+            500,
+            "COMPENSATION_RUNTIME_FAILED",
+            "Compensation stopped unexpectedly after entering its persisted lifecycle. A handler may have run; no terminal result was fabricated and compensation will not be replayed automatically.",
+          );
+        }
         result = {
           status: "failed",
-          nodeResults: [],
+          nodeResults: persistedNodeResults,
           error: {
-            code: "EXECUTION_FAILED",
+            code: "RUNTIME_FAILED",
             message: "Workflow execution failed unexpectedly.",
           },
         };
       }
 
-      const terminalUpdate: ExecutionUpdate =
-        result.status === "completed"
-          ? {
-              status: "completed",
-              nodeResults: result.nodeResults,
-              error: null,
-              completedAt: new Date(),
-            }
-          : toSafeFailure(result);
+      const terminalUpdate: ExecutionUpdate = {
+        status: result.status,
+        nodeResults: result.nodeResults,
+        error: result.error ?? null,
+        completedAt: new Date(),
+      };
 
-      const finalExecution = await dependencies.updateExecution(
-        tenantId,
-        executionId,
-        "running",
-        terminalUpdate,
-      );
+      let finalExecution;
+      try {
+        finalExecution = await dependencies.updateExecution(
+          tenantId,
+          executionId,
+          persistedStatus,
+          persistedNodeResults,
+          terminalUpdate,
+        );
+      } catch {
+        throw new ExecutionServiceError(
+          500,
+          "EXECUTION_RESULT_PERSISTENCE_FAILED",
+          getPersistedStatus() === "compensating"
+            ? "Compensation checkpoints were persisted, but the terminal execution state could not be confirmed. Do not assume a terminal status; compensation will not be replayed automatically."
+            : "Unable to persist the workflow execution result.",
+        );
+      }
 
       if (!finalExecution) {
         throw new ExecutionServiceError(
           500,
           "EXECUTION_RESULT_PERSISTENCE_FAILED",
-          "Unable to persist the workflow execution result.",
+          getPersistedStatus() === "compensating"
+            ? "Compensation checkpoints were persisted, but the terminal execution state could not be confirmed. Do not assume a terminal status; compensation will not be replayed automatically."
+            : "Unable to persist the workflow execution result.",
         );
       }
 

@@ -12,6 +12,21 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
 
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "type" in err &&
+    err.type === "entity.parse.failed"
+  ) {
+    res.status(400).json({
+      error: {
+        code: "INVALID_JSON",
+        message: "Request body must be valid JSON.",
+      },
+    });
+    return;
+  }
+
   res.status(500).json({
     error: {
       code: "INTERNAL_SERVER_ERROR",
