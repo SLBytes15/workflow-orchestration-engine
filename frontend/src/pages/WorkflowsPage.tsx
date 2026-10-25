@@ -25,11 +25,23 @@ import {
 import { getConditionConfigError } from "../components/workflow/nodes/node.types";
 import "./WorkflowsPage.css";
 
+type WorkflowStatus = "Active" | "Draft" | "Paused";
+
+type Workflow = {
+  id: string | number;
+  isPersisted: boolean;
+  name: string;
+  description: string;
+  status: WorkflowStatus;
+  version: number;
+  updatedAt: string;
+  graph?: WorkflowGraph;
+};
+
 type WorkflowsPageProps = {
   graph: WorkflowGraph | null;
   tenantApiKey?: string;
-  onOpenWorkflow?: (workflow: Workflow) => void;
-  onWorkflowDeleted?: (workflowId: string) => void;
+  onEditWorkflow?: (workflowId: string, graph: WorkflowGraph) => void;
 };
 
 const initialWorkflows: Workflow[] = [
@@ -65,8 +77,7 @@ const initialWorkflows: Workflow[] = [
 function WorkflowsPage({
   graph,
   tenantApiKey,
-  onOpenWorkflow,
-  onWorkflowDeleted,
+  onEditWorkflow,
 }: WorkflowsPageProps) {
   const normalizedTenantApiKey = tenantApiKey?.trim() || null;
   const [workflowState, setWorkflowState] = useState<{
@@ -144,7 +155,36 @@ function WorkflowsPage({
 
         if (cancelled) return;
 
-        const savedWorkflows = mapPersistedWorkflows(result.workflows);
+        const savedWorkflows: Workflow[] = result.workflows.map(
+          (item, index) => ({
+            id: String(item.id ?? item._id ?? `saved-${index}`),
+            isPersisted: Boolean(item.id ?? item._id),
+            graph: item.graph as WorkflowGraph | undefined,
+            name: item.name ?? "Untitled workflow",
+            description: item.description ?? "No description provided.",
+            status:
+              item.status === "Active" ||
+              item.status === "Paused" ||
+              item.status === "Draft"
+                ? item.status
+                : "Draft",
+            version: item.version ?? 1,
+            updatedAt: item.updatedAt
+              ? String(item.updatedAt).slice(0, 10)
+              : new Date().toISOString().slice(0, 10),
+          }),
+        );
+
+        setWorkflows((current) => {
+          const savedNames = new Set(
+            savedWorkflows.map((workflow) => workflow.name.toLowerCase()),
+          );
+
+          const demosWithoutDuplicates = current.filter(
+            (workflow) =>
+              workflow.isPersisted ||
+              !savedNames.has(workflow.name.toLowerCase()),
+          );
 
         setWorkflowState({
           tenantApiKey: normalizedTenantApiKey,
@@ -165,7 +205,8 @@ function WorkflowsPage({
           setIsLoadingSavedWorkflows(false);
         }
       }
-    }
+
+    };
 
     void loadWorkflows();
 
@@ -595,6 +636,11 @@ function WorkflowsPage({
               }
               isDeleting={deletingWorkflowId === String(workflow.id)}
               canRun={workflow.isPersisted}
+              onEdit={
+                workflow.isPersisted && workflow.graph && onEditWorkflow
+                  ? () => onEditWorkflow(String(workflow.id), workflow.graph!)
+                  : undefined
+              }
               isRunning={runningWorkflowId === String(workflow.id)}
               onRun={() => void handleRunWorkflow(workflow)}
             />

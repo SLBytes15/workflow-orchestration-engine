@@ -50,7 +50,11 @@ type NodePreviewProps = {
   workflowName?: string;
   initialGraph?: WorkflowGraph | null;
   onGraphChange?: (graph: WorkflowGraph) => void;
-  onSaveGraph?: (graph: WorkflowGraph) => Promise<void>;
+  initialGraph?: WorkflowGraph | null;
+  onSaveGraph?: (graph: WorkflowGraph) => void | Promise<void>;
+  isSaving?: boolean;
+  saveError?: string;
+  saveMessage?: string;
 };
 
 const initialNodes: Node[] = [
@@ -128,293 +132,20 @@ const nodeTypes = {
   condition: ConditionNode,
 };
 
-const conditionOperators: ConditionOp[] = [
-  "equals",
-  "notEquals",
-  "gt",
-  "gte",
-  "lt",
-  "lte",
-  "contains",
-  "startsWith",
-  "truthy",
-];
-
-function valueToEditorText(
-  value: unknown,
-  valueType: ConditionValueType,
-): string {
-  if (valueType === "string") return typeof value === "string" ? value : "";
-  if (valueType === "boolean") return String(value);
-  if (valueType === "number") return String(value);
-  return JSON.stringify(value) ?? "";
-}
-
-function clauseFromData(data: ConditionNodeData): ConditionConfig["clause"] | null {
-  if (!hasValidConditionConfig(data)) return null;
-
-  const config = data.config as ConditionConfig;
-  return config.clause;
-}
-
-function ConditionConfigEditor({
-  data,
-  onApply,
-}: {
-  data: ConditionNodeData;
-  onApply: (config: ConditionConfig) => void;
-}) {
-  const clause = clauseFromData(data);
-  const [left, setLeft] = useState(clause?.left ?? "");
-  const [op, setOp] = useState<ConditionOp>(clause?.op ?? "equals");
-  const [rightValueType, setRightValueType] = useState<ConditionValueType>(
-    clause && "right" in clause
-      ? getConditionValueType(clause.right)
-      : "boolean",
-  );
-  const [rightValue, setRightValue] = useState(
-    clause && "right" in clause
-      ? valueToEditorText(clause.right, getConditionValueType(clause.right))
-      : "true",
-  );
-  const [error, setError] = useState("");
-
-  function initializeDefault() {
-    const config = createConditionConfig();
-    setLeft(config.clause.left);
-    setOp(config.clause.op);
-    setRightValueType("boolean");
-    setRightValue(String(config.clause.right));
-    setError("");
-    onApply(config);
-  }
-
-  function applyConfiguration() {
-    const result = createConditionConfigFromInput(
-      left,
-      op,
-      rightValue,
-      rightValueType,
-    );
-    if (!result.config) {
-      setError(result.error ?? "Enter a valid condition.");
-      return;
-    }
-
-    onApply(result.config);
-    setError("");
-  }
-
-  if (!clause) {
-    return (
-      <div className="node-preview__condition-editor" role="region" aria-label="Condition configuration">
-        <p role="alert">
-          This condition has no supported clause configuration. Opening this
-          workflow has not changed its saved graph.
-        </p>
-        <p className="node-preview__help">
-          Condition nodes need both a True branch and a False branch. Connect
-          each branch to a node before saving or running the workflow.
-        </p>
-        <button type="button" onClick={initializeDefault}>
-          Replace with default condition
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <form
-      className="node-preview__condition-editor"
-      aria-label="Condition configuration"
-      onSubmit={(event) => {
-        event.preventDefault();
-        applyConfiguration();
-      }}
-    >
-      <label>
-        What do you want to check?
-        <input
-          value={left}
-          onChange={(event) => setLeft(event.target.value)}
-          placeholder="approved"
-          aria-describedby="condition-path-help"
-          aria-invalid={Boolean(error && !left.trim())}
-        />
-      </label>
-      <p id="condition-path-help" className="node-preview__help">
-        Choose a value from the workflow's execution input. Examples:{" "}
-        <code>approved</code>, <code>paymentMethod</code>, or{" "}
-        <code>order.total</code>.
-      </p>
-      <label>
-        How should it be checked?
-        <select
-          value={op}
-          onChange={(event) => setOp(event.target.value as ConditionOp)}
-        >
-          {conditionOperators.map((operator) => (
-            <option key={operator} value={operator}>
-              {CONDITION_OPERATOR_LABELS[operator]}
-            </option>
-          ))}
-        </select>
-      </label>
-      {op !== "truthy" && (
-        <>
-          <label>
-            What should it be compared with?
-            <select
-              value={rightValueType}
-              onChange={(event) =>
-                setRightValueType(event.target.value as ConditionValueType)
-              }
-              aria-label="Comparison value type"
-            >
-              <option value="string">Text</option>
-              <option value="number">Number</option>
-              <option value="boolean">True or false</option>
-              <option value="json">Other JSON value</option>
-            </select>
-          </label>
-          <label>
-            Comparison value
-            {rightValueType === "boolean" ? (
-              <select
-                value={rightValue}
-                onChange={(event) => setRightValue(event.target.value)}
-                aria-label="Comparison boolean value"
-                aria-invalid={Boolean(error)}
-              >
-                <option value="true">True</option>
-                <option value="false">False</option>
-              </select>
-            ) : (
-              <input
-                type="text"
-                inputMode={rightValueType === "number" ? "decimal" : undefined}
-                value={rightValue}
-                onChange={(event) => setRightValue(event.target.value)}
-                placeholder={
-                  rightValueType === "number"
-                    ? "Enter a number"
-                    : rightValueType === "json"
-                      ? 'For example: null, ["card"], or {"code": 1}'
-                      : "Enter text"
-                }
-                aria-invalid={Boolean(error)}
-              />
-            )}
-          </label>
-          {rightValueType === "number" && (
-            <p className="node-preview__help">
-              Enter a number, such as <code>100</code> or <code>12.5</code>.
-            </p>
-          )}
-          {rightValueType === "json" && (
-            <p className="node-preview__help">
-              Enter a valid JSON value. Invalid JSON is not converted
-              automatically.
-            </p>
-          )}
-        </>
-      )}
-      <p className="node-preview__condition-summary" aria-live="polite">
-        {left.trim()
-          ? op === "truthy"
-            ? summarizeCondition({ left: left.trim(), op })
-            : (() => {
-                const parsed = parseConditionValue(rightValue, rightValueType);
-                return parsed.error
-                  ? "Complete the comparison value to preview this condition."
-                  : summarizeCondition({
-                      left: left.trim(),
-                      op,
-                      right: parsed.value,
-                    });
-              })()
-          : "Enter what you want to check to preview this condition."}
-      </p>
-      <p className="node-preview__help">
-        Add one outgoing edge for both the True and False branches. The editor
-        will not create missing branches automatically.
-      </p>
-      {error && <p role="alert">{error}</p>}
-      <button type="submit">Apply condition</button>
-    </form>
-  );
-}
-
-function NodeLabelEditor({
-  node,
-  onApply,
-}: {
-  node: Node;
-  onApply: (label: string) => void;
-}) {
-  const [label, setLabel] = useState(String(node.data.label ?? ""));
-  const [error, setError] = useState("");
-
-  function applyLabel(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const validationError = validateNodeLabel(label);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-
-    onApply(label.trim());
-    setError("");
-  }
-
-  return (
-    <form
-      className="node-preview__condition-editor"
-      aria-label="Node label"
-      onSubmit={applyLabel}
-    >
-      <label>
-        Node label
-        <input
-          value={label}
-          maxLength={120}
-          onChange={(event) => setLabel(event.target.value)}
-          aria-invalid={Boolean(error)}
-        />
-      </label>
-      {error && <p role="alert">{error}</p>}
-      <button type="submit">Apply label</button>
-    </form>
-  );
-}
-
 function NodePreview({
-  workflowId,
-  workflowName,
-  initialGraph,
   onGraphChange,
+  initialGraph,
   onSaveGraph,
+  isSaving = false,
+  saveError = "",
+  saveMessage = "",
 }: NodePreviewProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(
-    initialGraph?.nodes ?? initialNodes,
+  const [nodes, , onNodesChange] = useNodesState(
+    (initialGraph?.nodes as Node[] | undefined) ?? initialNodes,
   );
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
-    initialGraph?.edges ?? initialEdges,
+  const [edges, setEdges, onEdgesChange] = useEdgesState(
+    (initialGraph?.edges as Edge[] | undefined) ?? initialEdges,
   );
-  const [selectedNodeId, setSelectedNodeId] = useState(
-    () =>
-      initialGraph?.nodes.find((node) => node.type === "condition")?.id ??
-      initialGraph?.nodes[0]?.id ??
-      initialNodes[0].id,
-  );
-  const [isSavingGraph, setIsSavingGraph] = useState(false);
-  const [saveError, setSaveError] = useState("");
-  const [saveMessage, setSaveMessage] = useState("");
-  const selectedNode = nodes.find((node) => node.id === selectedNodeId);
-  const selectedCondition =
-    selectedNode?.type === "condition"
-      ? (selectedNode as WorkflowFlowNode)
-      : undefined;
 
   const graphPayload: WorkflowGraph = useMemo(
     () => serializeWorkflowGraph(nodes, edges),
@@ -519,6 +250,21 @@ function NodePreview({
       <button type="button" onClick={onAddCondition}>
         Add condition node
       </button>
+
+      {onSaveGraph && (
+        <div className="workflow-card__actions">
+          <button
+            type="button"
+            className="workflow-card__run"
+            onClick={() => void onSaveGraph(graphPayload)}
+            disabled={isSaving}
+          >
+            {isSaving ? "Saving..." : "Save Changes"}
+          </button>
+          {saveError && <p role="alert">{saveError}</p>}
+          {saveMessage && <p role="status">{saveMessage}</p>}
+        </div>
+      )}
 
       <div style={{ width: "100%", height: "500px" }}>
         <ReactFlow

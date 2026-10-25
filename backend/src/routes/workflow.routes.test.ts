@@ -72,28 +72,17 @@ const service = {
     return [];
   },
 
-  async updateWorkflowGraph(
-    requestedTenantId: Types.ObjectId,
-    workflowId: string,
-    graph: WorkflowGraph,
-  ) {
-    graphUpdateCalls.push({
+  async updateWorkflow({ tenantId: requestedTenantId, workflowId, input }: {
+    tenantId: Types.ObjectId;
+    workflowId: Types.ObjectId;
+    input: { name?: string; description?: string; graph?: typeof validGraph };
+  }) {
+    return {
+      ...createdWorkflow,
+      _id: workflowId.toString(),
       tenantId: requestedTenantId,
-      workflowId,
-      graph,
-    });
-    return { ...createdWorkflow, tenantId: requestedTenantId, graph };
-  },
-
-  async deleteWorkflow(requestedTenantId: Types.ObjectId, workflowId: string) {
-    deleteWorkflowCalls.push({ tenantId: requestedTenantId, workflowId });
-    if (
-      requestedTenantId.equals(tenantId) &&
-      workflowId === "6ad9a2f75b4a085ee3c2c269"
-    ) {
-      return { ...createdWorkflow, tenantId: requestedTenantId };
-    }
-    return null;
+      ...input,
+    };
   },
 };
 
