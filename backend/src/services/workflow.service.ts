@@ -1,6 +1,6 @@
 import type { Types } from "mongoose";
 import WorkflowModel from "../models/workflow.model";
-import type { CreateWorkflowInput } from "../validators/workflow.validator";
+import type { CreateWorkflowInput, UpdateWorkflowInput } from "../validators/workflow.validator";
 import type { WorkflowGraph } from "../validators/workflow-graph.validator";
 
 
@@ -9,6 +9,12 @@ export interface CreateWorkflowCommand {
   input: CreateWorkflowInput;
 }
 
+
+export interface UpdateWorkflowCommand {
+  tenantId: Types.ObjectId;
+  workflowId: Types.ObjectId;
+  input: UpdateWorkflowInput;
+}
 
 export interface CreatedWorkflow {
   tenantId: Types.ObjectId;
@@ -23,6 +29,11 @@ export interface CreatedWorkflow {
 export interface WorkflowServiceDependencies {
   createWorkflowRecord(record: CreatedWorkflow): Promise<unknown>;
   findWorkflowRecordsByTenant(tenantId: Types.ObjectId): Promise<unknown[]>;
+  updateWorkflowRecord?(
+    tenantId: Types.ObjectId,
+    workflowId: Types.ObjectId,
+    updates: UpdateWorkflowInput,
+  ): Promise<unknown | null>;
 }
 
 const databaseDependencies: WorkflowServiceDependencies = {
@@ -35,6 +46,14 @@ const databaseDependencies: WorkflowServiceDependencies = {
       .sort({ createdAt: -1 })
       .lean()
       .exec();
+  },
+
+  async updateWorkflowRecord(tenantId, workflowId, updates) {
+    return WorkflowModel.findOneAndUpdate(
+      { _id: workflowId, tenantId },
+      { $set: updates, $inc: { version: 1 } },
+      { new: true, runValidators: true },
+    ).lean().exec();
   },
 };
 
@@ -70,6 +89,18 @@ const record: CreatedWorkflow = {
 
     async listWorkflows(tenantId: Types.ObjectId): Promise<unknown[]> {
       return dependencies.findWorkflowRecordsByTenant(tenantId);
+    },
+
+    async updateWorkflow({
+      tenantId,
+      workflowId,
+      input,
+    }: UpdateWorkflowCommand): Promise<unknown | null> {
+      if (!dependencies.updateWorkflowRecord) {
+        throw new Error("Workflow updates are not configured");
+      }
+
+      return dependencies.updateWorkflowRecord(tenantId, workflowId, input);
     },
   };
 }

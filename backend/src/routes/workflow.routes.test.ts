@@ -62,6 +62,19 @@ const service = {
     listedTenantIds.push(requestedTenantId);
     return [];
   },
+
+  async updateWorkflow({ tenantId: requestedTenantId, workflowId, input }: {
+    tenantId: Types.ObjectId;
+    workflowId: Types.ObjectId;
+    input: { name?: string; description?: string; graph?: typeof validGraph };
+  }) {
+    return {
+      ...createdWorkflow,
+      _id: workflowId.toString(),
+      tenantId: requestedTenantId,
+      ...input,
+    };
+  },
 };
 
 before(async () => {

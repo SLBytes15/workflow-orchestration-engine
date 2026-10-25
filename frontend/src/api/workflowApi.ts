@@ -35,12 +35,17 @@ export type CreatedWorkflow = {
   status?: string
   version?: number
   updatedAt?: string
+  graph?: WorkflowGraph
   [key: string]: unknown
 }
 
 export type CreateWorkflowResponse = {
   message: string
   workflow: CreatedWorkflow
+}
+
+export type UpdateWorkflowRequest = {
+  graph: WorkflowGraph
 }
 
 export type ListWorkflowsResponse = {
@@ -129,4 +134,35 @@ export async function getWorkflows(
   }
 
   return (await response.json()) as ListWorkflowsResponse
+}
+
+export async function updateWorkflow(
+  workflowId: string,
+  input: UpdateWorkflowRequest,
+  tenantApiKey: string,
+): Promise<CreateWorkflowResponse> {
+  if (!tenantApiKey.trim()) {
+    throw new Error('API authentication is not configured.')
+  }
+
+  const response = await fetch(
+    `${getApiBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': tenantApiKey,
+      },
+      body: JSON.stringify(input),
+    },
+  )
+
+  if (!response.ok) {
+    const result = (await response
+      .json()
+      .catch(() => null)) as WorkflowApiErrorResponse | null
+    throw new Error(getApiErrorMessage(result, response.status))
+  }
+
+  return (await response.json()) as CreateWorkflowResponse
 }

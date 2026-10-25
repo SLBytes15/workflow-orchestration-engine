@@ -25,11 +25,13 @@ type Workflow = {
   status: WorkflowStatus;
   version: number;
   updatedAt: string;
+  graph?: WorkflowGraph;
 };
 
 type WorkflowsPageProps = {
   graph: WorkflowGraph | null;
   tenantApiKey?: string;
+  onEditWorkflow?: (workflowId: string, graph: WorkflowGraph) => void;
 };
 
 const initialWorkflows: Workflow[] = [
@@ -66,6 +68,7 @@ const initialWorkflows: Workflow[] = [
 function WorkflowsPage({
   graph,
   tenantApiKey,
+  onEditWorkflow,
 }: WorkflowsPageProps) {
   const [workflows, setWorkflows] =
     useState<Workflow[]>(initialWorkflows);
@@ -127,6 +130,7 @@ function WorkflowsPage({
           (item, index) => ({
             id: String(item.id ?? item._id ?? `saved-${index}`),
             isPersisted: Boolean(item.id ?? item._id),
+            graph: item.graph as WorkflowGraph | undefined,
             name: item.name ?? "Untitled workflow",
             description: item.description ?? "No description provided.",
             status:
@@ -172,8 +176,7 @@ function WorkflowsPage({
         }
       }
 
-      }
-    }
+    };
 
     void loadWorkflows();
 
@@ -561,6 +564,11 @@ function WorkflowsPage({
               version={workflow.version}
               updatedAt={workflow.updatedAt}
               canRun={workflow.isPersisted}
+              onEdit={
+                workflow.isPersisted && workflow.graph && onEditWorkflow
+                  ? () => onEditWorkflow(String(workflow.id), workflow.graph!)
+                  : undefined
+              }
               isRunning={runningWorkflowId === String(workflow.id)}
               onRun={() => void handleRunWorkflow(workflow)}
             />

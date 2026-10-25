@@ -21,6 +21,11 @@ import type { WorkflowGraph } from "../../../api/workflowApi";
 
 type NodePreviewProps = {
   onGraphChange?: (graph: WorkflowGraph) => void;
+  initialGraph?: WorkflowGraph | null;
+  onSaveGraph?: (graph: WorkflowGraph) => void | Promise<void>;
+  isSaving?: boolean;
+  saveError?: string;
+  saveMessage?: string;
 };
 
 const initialNodes: Node[] = [
@@ -90,9 +95,20 @@ const nodeTypes = {
   condition: ConditionNode,
 };
 
-function NodePreview({ onGraphChange }: NodePreviewProps) {
-  const [nodes, , onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+function NodePreview({
+  onGraphChange,
+  initialGraph,
+  onSaveGraph,
+  isSaving = false,
+  saveError = "",
+  saveMessage = "",
+}: NodePreviewProps) {
+  const [nodes, , onNodesChange] = useNodesState(
+    (initialGraph?.nodes as Node[] | undefined) ?? initialNodes,
+  );
+  const [edges, setEdges, onEdgesChange] = useEdgesState(
+    (initialGraph?.edges as Edge[] | undefined) ?? initialEdges,
+  );
 
   const graphPayload: WorkflowGraph = useMemo(
     () => ({
@@ -138,6 +154,21 @@ function NodePreview({ onGraphChange }: NodePreviewProps) {
     <section className="node-preview">
       <h2>Workflow Node Preview</h2>
       <p>Connect nodes to preview your workflow structure.</p>
+
+      {onSaveGraph && (
+        <div className="workflow-card__actions">
+          <button
+            type="button"
+            className="workflow-card__run"
+            onClick={() => void onSaveGraph(graphPayload)}
+            disabled={isSaving}
+          >
+            {isSaving ? "Saving..." : "Save Changes"}
+          </button>
+          {saveError && <p role="alert">{saveError}</p>}
+          {saveMessage && <p role="status">{saveMessage}</p>}
+        </div>
+      )}
 
       <div style={{ width: "100%", height: "500px" }}>
         <ReactFlow

@@ -11,6 +11,7 @@ type WorkflowCardProps = {
   onRun?: () => void;
   isRunning?: boolean;
   canRun?: boolean;
+  onEdit?: () => void;
 };
 function WorkflowCard({
   name,
@@ -21,6 +22,7 @@ function WorkflowCard({
   onRun,
   isRunning = false,
   canRun = false,
+  onEdit,
 }: WorkflowCardProps) {
   return (
     <article className="workflow-card">
@@ -43,8 +45,17 @@ function WorkflowCard({
         </div>
       </div>
 
-      {onRun && (
+      {(onRun || onEdit) && (
         <div className="workflow-card__actions">
+          {onEdit && (
+            <button
+              type="button"
+              className="workflow-card__run"
+              onClick={onEdit}
+            >
+              Edit workflow
+            </button>
+          )}
           <button
             type="button"
             className="workflow-card__run"
