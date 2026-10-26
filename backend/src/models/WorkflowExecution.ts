@@ -1,131 +1,141 @@
 import { Schema, model, models } from "mongoose";
 
-const compensationErrorSchema = new Schema(
-  {
-    code: { type: String, required: true },
-    message: { type: String, required: true },
-  },
-  { _id: false },
-);
+type NodeResultStatus = "completed" | "failed" | "skipped";
+type NodeCompensationStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
-const compensationSchema = new Schema(
-  {
-    status: {
-      type: String,
-      enum: ["pending", "running", "completed", "failed"],
-      required: true,
-    },
-    startedAt: { type: Date, default: null },
-    completedAt: { type: Date, default: null },
-    error: {
-      type: compensationErrorSchema,
-      default: null,
-    },
-  },
-  { _id: false },
-);
+interface NodeCompensation {
+  status: NodeCompensationStatus;
+  startedAt?: Date | null;
+  completedAt?: Date | null;
+  error?: unknown;
+}
 
-const nodeErrorSchema = new Schema(
-  {
-    code: { type: String, required: true },
-    message: { type: String, required: true },
-  },
-  { _id: false },
-);
+interface NodeResult {
+  nodeId: string;
+  status: NodeResultStatus;
+  output?: unknown;
+  error?: unknown;
+  compensation?: NodeCompensation;
+}
 
-const nodeResultSchema = new Schema(
-  {
-    nodeId: { type: String, required: true },
-    status: {
-      type: String,
-      enum: ["completed", "failed", "skipped"],
-      required: true,
-    },
-    output: { type: Schema.Types.Mixed },
-    error: {
-      type: nodeErrorSchema,
-      default: undefined,
-    },
-    compensation: {
-      type: compensationSchema,
-      default: undefined,
-    },
-  },
-  { _id: false },
-);
-
-const compensationStatuses = ["pending", "running", "completed", "failed"];
+const NODE_RESULT_STATUSES = new Set<string>([
+  "completed",
+  "failed",
+  "skipped",
+]);
+const NODE_COMPENSATION_STATUSES = new Set<string>([
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "skipped",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isValidCompensationTimestamp(value: unknown): boolean {
-  if (value === null || value === undefined) {
-    return true;
-  }
-
-  return value instanceof Date && Number.isFinite(value.getTime());
+function isValidNodeResultStatus(value: unknown): value is NodeResultStatus {
+  return typeof value === "string" && NODE_RESULT_STATUSES.has(value);
 }
 
-function isValidCompensation(value: unknown): boolean {
-  if (!isRecord(value) || !compensationStatuses.includes(value.status as string)) {
-    return false;
-  }
-
-  if (
-    !isValidCompensationTimestamp(value.startedAt) ||
-    !isValidCompensationTimestamp(value.completedAt)
-  ) {
-    return false;
-  }
-
-  if (
-    value.error != null &&
-    (!isRecord(value.error) ||
-      typeof value.error.code !== "string" ||
-      value.error.code.length === 0 ||
-      typeof value.error.message !== "string" ||
-      value.error.message.length === 0)
-  ) {
-    return false;
-  }
-
-  return true;
+function isValidCompensation(value: unknown): value is NodeCompensation {
+  return (
+    isRecord(value) &&
+    typeof value.status === "string" &&
+    NODE_COMPENSATION_STATUSES.has(value.status)
+  );
 }
 
-const validateNodeResults = (nodeResults: unknown[]) => {
-  const nodeStatuses = ["completed", "failed", "skipped"];
-
-  return nodeResults.every((result) => {
-    if (result === null || typeof result !== "object" || Array.isArray(result)) {
-      return true;
-    }
-
-    const nodeResult = result as {
-      status?: unknown;
-      compensation?: { status?: unknown } | null;
-    };
-
-    if (
-      nodeResult.status !== undefined &&
-      !nodeStatuses.includes(nodeResult.status as string)
-    ) {
-      return false;
-    }
-
-    if (nodeResult.compensation != null) {
-
-      if (!isValidCompensation(nodeResult.compensation)) {
-  return false;
+function validateNodeResults(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (result) =>
+        isRecord(result) &&
+        typeof result.nodeId === "string" &&
+        result.nodeId.trim().length > 0 &&
+        isValidNodeResultStatus(result.status) &&
+        (result.compensation === undefined ||
+          result.compensation === null ||
+          isValidCompensation(result.compensation)),
+    )
+  );
 }
-        return false;
-      }
-    }
 
-    return true;
-  });
-};
+const executionCompensationSchema = new Schema(
+  {
+    status: {
+      type: String,
+      enum: ["not_started", "running", "completed", "failed"],
+      required: true,
+    },
+    startedAt: {
+      type: Date,
+      default: undefined,
+    },
+    completedAt: {
+      type: Date,
+      default: undefined,
+    },
+    error: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
+  },
+  { _id: false },
+);
+
+const nodeCompensationSchema = new Schema(
+  {
+    status: {
+      type: String,
+      enum: ["pending", "running", "completed", "failed", "skipped"],
+      required: true,
+    },
+    startedAt: {
+      type: Date,
+      default: undefined,
+    },
+    completedAt: {
+      type: Date,
+      default: undefined,
+    },
+    error: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
+  },
+  { _id: false },
+);
+
+const nodeResultSchema = new Schema<NodeResult>(
+  {
+    nodeId: {
+      type: String,
+      required: true,
+    },
+    status: {
+      type: String,
+      enum: [...NODE_RESULT_STATUSES],
+      required: true,
+    },
+    output: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
+    error: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
+    compensation: {
+      type: nodeCompensationSchema,
+      required: false,
+      default: undefined,
+    },
+  },
+  { _id: false, strict: false },
+);
 
 const workflowExecutionSchema = new Schema(
   {
@@ -169,7 +179,7 @@ const workflowExecutionSchema = new Schema(
       default: null,
     },
     nodeResults: {
-      type: [Schema.Types.Mixed],
+      type: [nodeResultSchema],
       default: [],
       validate: {
         validator: validateNodeResults,
@@ -177,6 +187,13 @@ const workflowExecutionSchema = new Schema(
           "Node results or compensation status is invalid.",
       },
     },
+
+    compensation: {
+      type: executionCompensationSchema,
+      required: false,
+      default: undefined,
+    },
+
     error: {
       type: Schema.Types.Mixed,
       default: null,
@@ -194,17 +211,12 @@ const workflowExecutionSchema = new Schema(
 );
 
 workflowExecutionSchema.pre("validate", function () {
-  const nodeStatuses = ["completed", "failed", "skipped"];
-
   for (const [index, result] of (this.nodeResults ?? []).entries()) {
     if (result === null || typeof result !== "object" || Array.isArray(result)) {
       continue;
     }
 
-    if (
-      result.status !== undefined &&
-      !nodeStatuses.includes(result.status)
-    ) {
+    if (!isValidNodeResultStatus(result.status)) {
       this.invalidate(
         `nodeResults.${index}.status`,
         `Unsupported node-result status: ${result.status}`,
@@ -212,12 +224,11 @@ workflowExecutionSchema.pre("validate", function () {
     }
 
     const compensation = result.compensation;
-if (compensation != null && !isValidCompensation(compensation)) {
-  this.invalidate(
-    `nodeResults.${index}.compensation`,
-    "Compensation metadata is invalid.",
-  );
-}
+    if (compensation != null && !isValidCompensation(compensation)) {
+      this.invalidate(
+        `nodeResults.${index}.compensation`,
+        "Compensation metadata is invalid.",
+      );
     }
   }
 });

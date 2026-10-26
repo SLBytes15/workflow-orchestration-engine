@@ -1,7 +1,11 @@
 import { Types } from "mongoose";
 import WorkflowModel from "../models/workflow.model";
-import type { CreateWorkflowInput } from "../validators/workflow.validator";
-import type { WorkflowGraph } from "../validators/workflow-graph.validator";
+import type { CreateWorkflowInput, UpdateWorkflowInput } from "../validators/workflow.validator";
+import {
+  validateConditionConfigurations,
+  validateWorkflowGraph,
+  type WorkflowGraph,
+} from "../validators/workflow-graph.validator";
 
 
 export interface CreateWorkflowCommand {
@@ -9,6 +13,12 @@ export interface CreateWorkflowCommand {
   input: CreateWorkflowInput;
 }
 
+
+export interface UpdateWorkflowCommand {
+  tenantId: Types.ObjectId;
+  workflowId: Types.ObjectId;
+  input: UpdateWorkflowInput;
+}
 
 export interface CreatedWorkflow {
   tenantId: Types.ObjectId;
@@ -23,12 +33,17 @@ export interface CreatedWorkflow {
 export interface WorkflowServiceDependencies {
   createWorkflowRecord(record: CreatedWorkflow): Promise<unknown>;
   findWorkflowRecordsByTenant(tenantId: Types.ObjectId): Promise<unknown[]>;
-  updateWorkflowGraph(
+  updateWorkflowRecord?(
+    tenantId: Types.ObjectId,
+    workflowId: Types.ObjectId,
+    updates: UpdateWorkflowInput,
+  ): Promise<unknown | null>;
+  updateWorkflowGraph?(
     tenantId: Types.ObjectId,
     workflowId: Types.ObjectId,
     graph: WorkflowGraph,
   ): Promise<unknown | null>;
-  deleteWorkflow(
+  deleteWorkflow?(
     tenantId: Types.ObjectId,
     workflowId: Types.ObjectId,
   ): Promise<unknown | null>;
@@ -46,14 +61,20 @@ const databaseDependencies: WorkflowServiceDependencies = {
       .exec();
   },
 
+  async updateWorkflowRecord(tenantId, workflowId, updates) {
+    return WorkflowModel.findOneAndUpdate(
+      { _id: workflowId, tenantId },
+      { $set: updates, $inc: { version: 1 } },
+      { new: true, runValidators: true },
+    ).lean().exec();
+  },
+
   async updateWorkflowGraph(tenantId, workflowId, graph) {
     return WorkflowModel.findOneAndUpdate(
       { _id: workflowId, tenantId },
       { $set: { graph }, $inc: { version: 1 } },
       { new: true, runValidators: true },
-    )
-      .lean()
-      .exec();
+    ).lean().exec();
   },
 
   async deleteWorkflow(tenantId, workflowId) {
@@ -97,33 +118,61 @@ const record: CreatedWorkflow = {
       return dependencies.findWorkflowRecordsByTenant(tenantId);
     },
 
+    async updateWorkflow({
+      tenantId,
+      workflowId,
+      input,
+    }: UpdateWorkflowCommand): Promise<unknown | null> {
+      if (!dependencies.updateWorkflowRecord) {
+        throw new Error("Workflow updates are not configured");
+      }
+
+      return dependencies.updateWorkflowRecord(tenantId, workflowId, input);
+    },
+
     async updateWorkflowGraph(
       tenantId: Types.ObjectId,
-      workflowIdValue: string,
+      workflowId: string,
       graph: WorkflowGraph,
     ): Promise<unknown | null> {
-      if (!/^[a-f\d]{24}$/i.test(workflowIdValue)) {
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
         return null;
+      }
+
+      const graphErrors = validateWorkflowGraph(graph);
+      if (graphErrors.length === 0) {
+        graphErrors.push(...validateConditionConfigurations(graph));
+      }
+      if (graphErrors.length > 0) {
+        throw new Error(`The workflow graph is invalid: ${graphErrors.join("; ")}`);
+      }
+
+      if (!dependencies.updateWorkflowGraph) {
+        throw new Error("Workflow graph updates are not configured");
       }
 
       return dependencies.updateWorkflowGraph(
         tenantId,
-        new Types.ObjectId(workflowIdValue),
+        new Types.ObjectId(workflowId),
         graph,
       );
     },
 
     async deleteWorkflow(
       tenantId: Types.ObjectId,
-      workflowIdValue: string,
+      workflowId: string,
     ): Promise<unknown | null> {
-      if (!/^[a-f\d]{24}$/i.test(workflowIdValue)) {
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
         return null;
+      }
+
+      if (!dependencies.deleteWorkflow) {
+        throw new Error("Workflow deletion is not configured");
       }
 
       return dependencies.deleteWorkflow(
         tenantId,
-        new Types.ObjectId(workflowIdValue),
+        new Types.ObjectId(workflowId),
       );
     },
   };

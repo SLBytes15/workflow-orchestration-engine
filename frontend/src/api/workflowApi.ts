@@ -92,6 +92,10 @@ export type CreateWorkflowResponse = {
   workflow: CreatedWorkflow
 }
 
+export type UpdateWorkflowRequest = {
+  graph: WorkflowGraph
+}
+
 export type ListWorkflowsResponse = {
   message: string
   workflows: CreatedWorkflow[]
@@ -180,9 +184,9 @@ export async function getWorkflows(
   return (await response.json()) as ListWorkflowsResponse
 }
 
-export async function updateWorkflowGraph(
+export async function updateWorkflow(
   workflowId: string,
-  graph: WorkflowGraph,
+  input: UpdateWorkflowRequest,
   tenantApiKey: string,
 ): Promise<CreateWorkflowResponse> {
   if (!tenantApiKey.trim()) {
@@ -190,14 +194,14 @@ export async function updateWorkflowGraph(
   }
 
   const response = await fetch(
-    `${getApiBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}/graph`,
+    `${getApiBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}`,
     {
-      method: 'PUT',
+      method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': tenantApiKey,
       },
-      body: JSON.stringify({ graph }),
+      body: JSON.stringify(input),
     },
   )
 
@@ -205,18 +209,10 @@ export async function updateWorkflowGraph(
     const result = (await response
       .json()
       .catch(() => null)) as WorkflowApiErrorResponse | null
-
     throw new Error(getApiErrorMessage(result, response.status))
   }
 
-  const result = (await response.json()) as CreateWorkflowResponse
-  if (!isWorkflowGraph(result.workflow?.graph)) {
-    throw new Error(
-      'The backend response did not contain the updated workflow graph.',
-    )
-  }
-
-  return result
+  return (await response.json()) as CreateWorkflowResponse
 }
 
 export async function deleteWorkflow(

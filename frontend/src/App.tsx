@@ -1,11 +1,11 @@
 
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import WorkflowsPage from './pages/WorkflowsPage'
 import ExecutionsPage from './pages/ExecutionsPage'
 import Sidebar from './components/layout/Sidebar'
 import NodePreview from './components/workflow/nodes/NodePreview'
-import { updateWorkflowGraph, type WorkflowGraph } from './api/workflowApi'
-import type { Workflow } from './workflowState'
+import type { WorkflowGraph } from './api/workflowApi'
+import { validateWorkflowGraph } from './graphValidation'
 import './App.css'
 
 type Page =
@@ -19,31 +19,29 @@ function App() {
   const [activePage, setActivePage] = useState<Page>('Dashboard')
   const [workflowGraph, setWorkflowGraph] =
     useState<WorkflowGraph | null>(null)
-  const [openedWorkflow, setOpenedWorkflow] = useState<Workflow | null>(null)
-
-  const handleGraphChange = useCallback((graph: WorkflowGraph) => {
-    setWorkflowGraph(graph)
-    setOpenedWorkflow((current) =>
-      current ? { ...current, graph } : current,
-    )
-  }, [])
-
-  const handleWorkflowDeleted = useCallback((workflowId: string) => {
-    if (!openedWorkflow || String(openedWorkflow.id) !== workflowId) return
-    setOpenedWorkflow(null)
-    setWorkflowGraph(null)
-    setActivePage('Workflows')
-  }, [openedWorkflow])
 
   const tenantApiKey = import.meta.env.VITE_API_KEY
   console.log("API key configured:", Boolean(tenantApiKey?.trim()));
+
+  const handleEditWorkflow = (_workflowId: string, graph: WorkflowGraph) => {
+    setWorkflowGraph(graph)
+    setActivePage('Node Preview')
+  }
+
+  const graphIssues = workflowGraph ? validateWorkflowGraph(workflowGraph) : []
+  const graphStatus = !workflowGraph
+    ? 'Waiting for graph'
+    : graphIssues.length === 0
+      ? 'Graph available'
+      : `Graph available — ${graphIssues.length} contract ${
+          graphIssues.length === 1 ? 'issue' : 'issues'
+        }`
 
   return (
     <div className="app-layout">
       <Sidebar
         activePage={activePage}
         onNavigate={(page) => {
-          setOpenedWorkflow(null)
           setActivePage(page as Page)
         }}
       />
@@ -56,11 +54,7 @@ function App() {
             <WorkflowsPage
               graph={workflowGraph}
               tenantApiKey={tenantApiKey}
-              onOpenWorkflow={(workflow) => {
-                setOpenedWorkflow(workflow)
-                setActivePage('Node Preview')
-              }}
-              onWorkflowDeleted={handleWorkflowDeleted}
+              onEditWorkflow={handleEditWorkflow}
             />
           </>
         )}
@@ -69,46 +63,20 @@ function App() {
           <WorkflowsPage
             graph={workflowGraph}
             tenantApiKey={tenantApiKey}
-            onOpenWorkflow={(workflow) => {
-              setOpenedWorkflow(workflow)
-              setActivePage('Node Preview')
-            }}
-            onWorkflowDeleted={handleWorkflowDeleted}
+            onEditWorkflow={handleEditWorkflow}
           />
         )}
 
         {activePage === 'Node Preview' && (
           <>
             <h1>Node Preview</h1>
-            <NodePreview
-              key={openedWorkflow?.id ?? 'new-workflow'}
-              workflowId={
-                openedWorkflow ? String(openedWorkflow.id) : undefined
-              }
-              workflowName={openedWorkflow?.name}
-              initialGraph={openedWorkflow?.graph ?? null}
-              onGraphChange={handleGraphChange}
-              onSaveGraph={
-                openedWorkflow && tenantApiKey
-                  ? async (graph) => {
-                      const result = await updateWorkflowGraph(
-                        String(openedWorkflow.id),
-                        graph,
-                        tenantApiKey,
-                      )
-                      setOpenedWorkflow((current) =>
-                        current && String(current.id) === String(openedWorkflow.id)
-                          ? { ...current, graph: result.workflow.graph }
-                          : current,
-                      )
-                    }
-                  : undefined
-              }
-            />
-            <p>
-              Graph status:{' '}
-              {workflowGraph ? 'Graph available' : 'Waiting for graph'}
+            <p role="status" className="node-preview__status">
+              Graph status: {graphStatus}
             </p>
+            <NodePreview
+              initialGraph={workflowGraph}
+              onGraphChange={setWorkflowGraph}
+            />
           </>
         )}
         {activePage === 'Executions' && (

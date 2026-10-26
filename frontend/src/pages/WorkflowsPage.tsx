@@ -17,7 +17,6 @@ import {
 import {
   appendWorkflow,
   mapPersistedWorkflow,
-  mapPersistedWorkflows,
   mergeSavedWorkflows,
   removeWorkflow,
   type Workflow,
@@ -28,7 +27,7 @@ import "./WorkflowsPage.css";
 type WorkflowsPageProps = {
   graph: WorkflowGraph | null;
   tenantApiKey?: string;
-  onOpenWorkflow?: (workflow: Workflow) => void;
+  onEditWorkflow?: (workflowId: string, graph: WorkflowGraph) => void;
   onWorkflowDeleted?: (workflowId: string) => void;
 };
 
@@ -65,7 +64,7 @@ const initialWorkflows: Workflow[] = [
 function WorkflowsPage({
   graph,
   tenantApiKey,
-  onOpenWorkflow,
+  onEditWorkflow,
   onWorkflowDeleted,
 }: WorkflowsPageProps) {
   const normalizedTenantApiKey = tenantApiKey?.trim() || null;
@@ -144,11 +143,48 @@ function WorkflowsPage({
 
         if (cancelled) return;
 
-        const savedWorkflows = mapPersistedWorkflows(result.workflows);
+        const savedWorkflows: Workflow[] = result.workflows.map(
+          (item, index) => ({
+            id: String(item.id ?? item._id ?? `saved-${index}`),
+            isPersisted: Boolean(item.id ?? item._id),
+            graph: item.graph as WorkflowGraph | undefined,
+            name: item.name ?? "Untitled workflow",
+            description: item.description ?? "No description provided.",
+            status:
+              item.status === "Active" ||
+              item.status === "Paused" ||
+              item.status === "Draft"
+                ? item.status
+                : "Draft",
+            version: item.version ?? 1,
+            updatedAt: item.updatedAt
+              ? String(item.updatedAt).slice(0, 10)
+              : new Date().toISOString().slice(0, 10),
+          }),
+        );
 
-        setWorkflowState({
-          tenantApiKey: normalizedTenantApiKey,
-          workflows: mergeSavedWorkflows(initialWorkflows, savedWorkflows),
+        setWorkflowState((current) => {
+          const currentWorkflows =
+            current.tenantApiKey === normalizedTenantApiKey
+              ? current.workflows
+              : initialWorkflows;
+          const savedNames = new Set(
+            savedWorkflows.map((workflow) => workflow.name.toLowerCase()),
+          );
+
+          const demosWithoutDuplicates = currentWorkflows.filter(
+            (workflow) =>
+              workflow.isPersisted ||
+              !savedNames.has(workflow.name.toLowerCase()),
+          );
+
+          return {
+            tenantApiKey: normalizedTenantApiKey,
+            workflows: mergeSavedWorkflows(
+              demosWithoutDuplicates,
+              savedWorkflows,
+            ),
+          };
         });
       } catch (error) {
         console.error("Unable to load saved workflows:", error);
@@ -165,7 +201,8 @@ function WorkflowsPage({
           setIsLoadingSavedWorkflows(false);
         }
       }
-    }
+
+    };
 
     void loadWorkflows();
 
@@ -360,7 +397,7 @@ function WorkflowsPage({
       const execution = await startExecution(
         String(workflow.id),
         tenantApiKey,
-        { approved: true },
+        { approved: true, paymentMethod: "card" },
       );
       setLastExecution(execution);
 
@@ -584,8 +621,9 @@ function WorkflowsPage({
               version={workflow.version}
               updatedAt={workflow.updatedAt}
               onOpen={
-                workflow.isPersisted && workflow.graph && onOpenWorkflow
-                  ? () => onOpenWorkflow(workflow)
+                workflow.isPersisted && workflow.graph && onEditWorkflow
+                  ? () =>
+                      onEditWorkflow(String(workflow.id), workflow.graph!)
                   : undefined
               }
               onDelete={
@@ -595,6 +633,11 @@ function WorkflowsPage({
               }
               isDeleting={deletingWorkflowId === String(workflow.id)}
               canRun={workflow.isPersisted}
+              onEdit={
+                workflow.isPersisted && workflow.graph && onEditWorkflow
+                  ? () => onEditWorkflow(String(workflow.id), workflow.graph!)
+                  : undefined
+              }
               isRunning={runningWorkflowId === String(workflow.id)}
               onRun={() => void handleRunWorkflow(workflow)}
             />

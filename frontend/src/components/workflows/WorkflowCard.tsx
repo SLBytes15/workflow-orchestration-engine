@@ -15,6 +15,7 @@ type WorkflowCardProps = {
   onRun?: () => void;
   isRunning?: boolean;
   canRun?: boolean;
+  onEdit?: () => void;
 };
 function WorkflowCard({
   name,
@@ -28,10 +29,23 @@ function WorkflowCard({
   onRun,
   isRunning = false,
   canRun = false,
+  onEdit,
 }: WorkflowCardProps) {
   return (
     <article className="workflow-card">
-      <div className="workflow-card__content">
+      <div
+        className={`workflow-card__content${onOpen ? " workflow-card__content--open" : ""}`}
+        role={onOpen ? "button" : undefined}
+        tabIndex={onOpen ? 0 : undefined}
+        aria-label={onOpen ? `Open workflow: ${name}` : undefined}
+        onClick={onOpen}
+        onKeyDown={(event) => {
+          if (onOpen && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            onOpen();
+          }
+        }}
+      >
         <div className="workflow-card__heading">
           <h2>{name}</h2>
 
@@ -50,21 +64,17 @@ function WorkflowCard({
         </div>
       </div>
 
-      {onOpen && (
+      {(onRun || onEdit) && (
         <div className="workflow-card__actions">
-          <button
-            type="button"
-            className="workflow-card__open"
-            onClick={onOpen}
-            aria-label={`Open workflow: ${name}`}
-          >
-            Open workflow
-          </button>
-        </div>
-      )}
-
-      {onRun && (
-        <div className="workflow-card__actions">
+          {onEdit && (
+            <button
+              type="button"
+              className="workflow-card__run"
+              onClick={onEdit}
+            >
+              Edit workflow
+            </button>
+          )}
           <button
             type="button"
             className="workflow-card__run"
