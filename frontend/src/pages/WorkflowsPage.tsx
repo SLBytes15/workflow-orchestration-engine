@@ -17,7 +17,6 @@ import {
 import {
   appendWorkflow,
   mapPersistedWorkflow,
-  mapPersistedWorkflows,
   mergeSavedWorkflows,
   removeWorkflow,
   type Workflow,
@@ -25,23 +24,11 @@ import {
 import { getConditionConfigError } from "../components/workflow/nodes/node.types";
 import "./WorkflowsPage.css";
 
-type WorkflowStatus = "Active" | "Draft" | "Paused";
-
-type Workflow = {
-  id: string | number;
-  isPersisted: boolean;
-  name: string;
-  description: string;
-  status: WorkflowStatus;
-  version: number;
-  updatedAt: string;
-  graph?: WorkflowGraph;
-};
-
 type WorkflowsPageProps = {
   graph: WorkflowGraph | null;
   tenantApiKey?: string;
   onEditWorkflow?: (workflowId: string, graph: WorkflowGraph) => void;
+  onWorkflowDeleted?: (workflowId: string) => void;
 };
 
 const initialWorkflows: Workflow[] = [
@@ -78,6 +65,7 @@ function WorkflowsPage({
   graph,
   tenantApiKey,
   onEditWorkflow,
+  onWorkflowDeleted,
 }: WorkflowsPageProps) {
   const normalizedTenantApiKey = tenantApiKey?.trim() || null;
   const [workflowState, setWorkflowState] = useState<{
@@ -175,20 +163,28 @@ function WorkflowsPage({
           }),
         );
 
-        setWorkflows((current) => {
+        setWorkflowState((current) => {
+          const currentWorkflows =
+            current.tenantApiKey === normalizedTenantApiKey
+              ? current.workflows
+              : initialWorkflows;
           const savedNames = new Set(
             savedWorkflows.map((workflow) => workflow.name.toLowerCase()),
           );
 
-          const demosWithoutDuplicates = current.filter(
+          const demosWithoutDuplicates = currentWorkflows.filter(
             (workflow) =>
               workflow.isPersisted ||
               !savedNames.has(workflow.name.toLowerCase()),
           );
 
-        setWorkflowState({
-          tenantApiKey: normalizedTenantApiKey,
-          workflows: mergeSavedWorkflows(initialWorkflows, savedWorkflows),
+          return {
+            tenantApiKey: normalizedTenantApiKey,
+            workflows: mergeSavedWorkflows(
+              demosWithoutDuplicates,
+              savedWorkflows,
+            ),
+          };
         });
       } catch (error) {
         console.error("Unable to load saved workflows:", error);
@@ -625,8 +621,9 @@ function WorkflowsPage({
               version={workflow.version}
               updatedAt={workflow.updatedAt}
               onOpen={
-                workflow.isPersisted && workflow.graph && onOpenWorkflow
-                  ? () => onOpenWorkflow(workflow)
+                workflow.isPersisted && workflow.graph && onEditWorkflow
+                  ? () =>
+                      onEditWorkflow(String(workflow.id), workflow.graph!)
                   : undefined
               }
               onDelete={

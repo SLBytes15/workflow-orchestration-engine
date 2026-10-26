@@ -272,6 +272,20 @@ test("rejects malformed workflow IDs without attempting a graph update", async (
   assert.deepEqual(context.graphUpdates, []);
 });
 
+test("rejects invalid workflow graphs without attempting an update", async () => {
+  const context = setup();
+
+  await assert.rejects(
+    context.service.updateWorkflowGraph(
+      new Types.ObjectId(),
+      new Types.ObjectId().toString(),
+      validGraph,
+    ),
+    /The workflow graph is invalid/,
+  );
+  assert.deepEqual(context.graphUpdates, []);
+});
+
 test("deletes a workflow by both its ID and authenticated tenant", async () => {
   const context = setup();
   const tenantId = new Types.ObjectId();
@@ -284,6 +298,64 @@ test("deletes a workflow by both its ID and authenticated tenant", async () => {
 
   assert.deepEqual(context.workflowDeletes, [{ tenantId, workflowId }]);
   assert.deepEqual(result, { tenantId, _id: workflowId });
+});
+
+test("returns null when a graph update cannot find a workflow for the tenant", async () => {
+  const tenantId = new Types.ObjectId();
+  const workflowId = new Types.ObjectId();
+  const graph = structuredClone(validGraph);
+  const conditionNode = graph.nodes.find((node) => node.type === "condition");
+  assert.ok(conditionNode);
+  conditionNode.data.config = {
+    type: "clause",
+    clause: { left: "approved", op: "equals", right: true },
+  };
+  const dependencies: WorkflowServiceDependencies = {
+    async createWorkflowRecord(record) {
+      return record;
+    },
+    async findWorkflowRecordsByTenant() {
+      return [];
+    },
+    async updateWorkflowGraph(requestedTenantId, requestedWorkflowId) {
+      assert.ok(requestedTenantId.equals(tenantId));
+      assert.ok(requestedWorkflowId.equals(workflowId));
+      return null;
+    },
+  };
+
+  const result = await createWorkflowService(dependencies).updateWorkflowGraph(
+    tenantId,
+    workflowId.toString(),
+    graph,
+  );
+
+  assert.equal(result, null);
+});
+
+test("returns null when deletion cannot find a workflow for the tenant", async () => {
+  const tenantId = new Types.ObjectId();
+  const workflowId = new Types.ObjectId();
+  const dependencies: WorkflowServiceDependencies = {
+    async createWorkflowRecord(record) {
+      return record;
+    },
+    async findWorkflowRecordsByTenant() {
+      return [];
+    },
+    async deleteWorkflow(requestedTenantId, requestedWorkflowId) {
+      assert.ok(requestedTenantId.equals(tenantId));
+      assert.ok(requestedWorkflowId.equals(workflowId));
+      return null;
+    },
+  };
+
+  const result = await createWorkflowService(dependencies).deleteWorkflow(
+    tenantId,
+    workflowId.toString(),
+  );
+
+  assert.equal(result, null);
 });
 
 test("rejects malformed workflow IDs without attempting deletion", async () => {

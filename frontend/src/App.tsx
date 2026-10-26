@@ -1,5 +1,5 @@
 
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import WorkflowsPage from './pages/WorkflowsPage'
 import ExecutionsPage from './pages/ExecutionsPage'
 import Sidebar from './components/layout/Sidebar'
@@ -19,14 +19,14 @@ function App() {
   const [activePage, setActivePage] = useState<Page>('Dashboard')
   const [workflowGraph, setWorkflowGraph] =
     useState<WorkflowGraph | null>(null)
-  const [selectedWorkflowId, setSelectedWorkflowId] =
-    useState<string | null>(null)
-  const [isSavingGraph, setIsSavingGraph] = useState(false)
-  const [graphSaveError, setGraphSaveError] = useState('')
-  const [graphSaveMessage, setGraphSaveMessage] = useState('')
 
   const tenantApiKey = import.meta.env.VITE_API_KEY
   console.log("API key configured:", Boolean(tenantApiKey?.trim()));
+
+  const handleEditWorkflow = (_workflowId: string, graph: WorkflowGraph) => {
+    setWorkflowGraph(graph)
+    setActivePage('Node Preview')
+  }
 
   const graphIssues = workflowGraph ? validateWorkflowGraph(workflowGraph) : []
   const graphStatus = !workflowGraph
@@ -42,7 +42,6 @@ function App() {
       <Sidebar
         activePage={activePage}
         onNavigate={(page) => {
-          setOpenedWorkflow(null)
           setActivePage(page as Page)
         }}
       />
@@ -74,7 +73,10 @@ function App() {
             <p role="status" className="node-preview__status">
               Graph status: {graphStatus}
             </p>
-            <NodePreview onGraphChange={setWorkflowGraph} />
+            <NodePreview
+              initialGraph={workflowGraph}
+              onGraphChange={setWorkflowGraph}
+            />
           </>
         )}
         {activePage === 'Executions' && (

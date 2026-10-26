@@ -5,7 +5,7 @@ import type { WorkflowGraph as ApiWorkflowGraph } from "../../../api/workflowApi
 
 interface WorkflowNodeBase extends Record<string, unknown> {
   label: string;
-  config?: Record<string, unknown>;
+  config?: unknown;
 }
 
 export type TriggerNodeData = WorkflowNodeBase & { type: "trigger" };
