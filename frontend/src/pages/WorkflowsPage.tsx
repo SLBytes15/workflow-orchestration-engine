@@ -626,6 +626,7 @@ function WorkflowsPage({
                       onEditWorkflow(String(workflow.id), workflow.graph!)
                   : undefined
               }
+              
               onDelete={
                 workflow.isPersisted
                   ? () => void handleDeleteWorkflow(workflow)
@@ -634,10 +635,10 @@ function WorkflowsPage({
               isDeleting={deletingWorkflowId === String(workflow.id)}
               canRun={workflow.isPersisted}
               onEdit={
-                workflow.isPersisted && workflow.graph && onEditWorkflow
-                  ? () => onEditWorkflow(String(workflow.id), workflow.graph!)
-                  : undefined
-              }
+  workflow.isPersisted && workflow.graph && onEditWorkflow
+    ? () => onEditWorkflow(String(workflow.id), workflow.graph!)
+    : undefined
+}
               isRunning={runningWorkflowId === String(workflow.id)}
               onRun={() => void handleRunWorkflow(workflow)}
             />
