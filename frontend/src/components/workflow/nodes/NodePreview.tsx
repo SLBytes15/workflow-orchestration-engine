@@ -25,7 +25,15 @@ import type { WorkflowGraph } from "../../../api/workflowApi";
 import { validateWorkflowGraph } from "../../../graphValidation";
 
 type NodePreviewProps = {
+  workflowId?: string;
+  workflowName?: string;
+  initialGraph?: WorkflowGraph | null;
   onGraphChange?: (graph: WorkflowGraph) => void;
+  initialGraph?: WorkflowGraph | null;
+  onSaveGraph?: (graph: WorkflowGraph) => void | Promise<void>;
+  isSaving?: boolean;
+  saveError?: string;
+  saveMessage?: string;
 };
 
 /**
@@ -144,7 +152,15 @@ const initialNodes: WorkflowFlowNode[] = [
     position: { x: 250, y: 180 },
     data: {
       type: "condition",
-      label: "Payment method",
+      label: "Order approved?",
+      config: {
+        type: "clause",
+        clause: {
+          left: "approved",
+          op: "equals",
+          right: true,
+        },
+      },
     },
   },
   {
@@ -319,7 +335,42 @@ function NodePreview({ onGraphChange }: NodePreviewProps) {
   return (
     <section className="node-preview">
       <h2>Workflow Node Preview</h2>
+      {workflowId && (
+        <p role="status">
+          Editing saved workflow: {workflowName ?? "Untitled workflow"} (ID:{" "}
+          {workflowId})
+        </p>
+      )}
       <p>Connect nodes to preview your workflow structure.</p>
+      {onSaveGraph && (
+        <button
+          type="button"
+          onClick={() => void handleSaveGraph()}
+          disabled={isSavingGraph}
+        >
+          {isSavingGraph ? "Saving..." : "Save workflow changes"}
+        </button>
+      )}
+      {saveError && <p role="alert">{saveError}</p>}
+      {saveMessage && <p role="status">{saveMessage}</p>}
+      <button type="button" onClick={onAddCondition}>
+        Add condition node
+      </button>
+
+      {onSaveGraph && (
+        <div className="workflow-card__actions">
+          <button
+            type="button"
+            className="workflow-card__run"
+            onClick={() => void onSaveGraph(graphPayload)}
+            disabled={isSaving}
+          >
+            {isSaving ? "Saving..." : "Save Changes"}
+          </button>
+          {saveError && <p role="alert">{saveError}</p>}
+          {saveMessage && <p role="status">{saveMessage}</p>}
+        </div>
+      )}
 
       <div className="node-preview__toolbar">
         <button type="button" onClick={addConditionNode}>
@@ -430,6 +481,20 @@ function NodePreview({ onGraphChange }: NodePreviewProps) {
           <pre>{JSON.stringify(graphPayload, null, 2)}</pre>
         </details>
       </div>
+      {selectedNode && (
+        <NodeLabelEditor
+          key={`label-${selectedNode.id}`}
+          node={selectedNode}
+          onApply={updateSelectedNodeLabel}
+        />
+      )}
+      {selectedCondition && (
+        <ConditionConfigEditor
+          key={selectedCondition.id}
+          data={selectedCondition.data as ConditionNodeData}
+          onApply={updateSelectedCondition}
+        />
+      )}
     </section>
   );
 }

@@ -1,5 +1,5 @@
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import WorkflowsPage from './pages/WorkflowsPage'
 import ExecutionsPage from './pages/ExecutionsPage'
 import Sidebar from './components/layout/Sidebar'
@@ -19,6 +19,11 @@ function App() {
   const [activePage, setActivePage] = useState<Page>('Dashboard')
   const [workflowGraph, setWorkflowGraph] =
     useState<WorkflowGraph | null>(null)
+  const [selectedWorkflowId, setSelectedWorkflowId] =
+    useState<string | null>(null)
+  const [isSavingGraph, setIsSavingGraph] = useState(false)
+  const [graphSaveError, setGraphSaveError] = useState('')
+  const [graphSaveMessage, setGraphSaveMessage] = useState('')
 
   const tenantApiKey = import.meta.env.VITE_API_KEY
   console.log("API key configured:", Boolean(tenantApiKey?.trim()));
@@ -36,7 +41,10 @@ function App() {
     <div className="app-layout">
       <Sidebar
         activePage={activePage}
-        onNavigate={(page) => setActivePage(page as Page)}
+        onNavigate={(page) => {
+          setOpenedWorkflow(null)
+          setActivePage(page as Page)
+        }}
       />
 
       <main className="app">
@@ -47,6 +55,7 @@ function App() {
             <WorkflowsPage
               graph={workflowGraph}
               tenantApiKey={tenantApiKey}
+              onEditWorkflow={handleEditWorkflow}
             />
           </>
         )}
@@ -55,6 +64,7 @@ function App() {
           <WorkflowsPage
             graph={workflowGraph}
             tenantApiKey={tenantApiKey}
+            onEditWorkflow={handleEditWorkflow}
           />
         )}
 

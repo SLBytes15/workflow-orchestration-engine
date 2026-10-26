@@ -8,24 +8,33 @@ import { errorHandler } from "../middleware/errorHandler.middleware";
 import type { TenantResolver } from "../services/tenantResolver";
 import { createWorkflowRouter } from "./workflow.routes";
 import { validGraph } from "../validators/validGraph.fixture";
+import type { WorkflowGraph } from "../validators/workflow-graph.validator";
 
 const tenantId = new Types.ObjectId();
+const otherTenantId = new Types.ObjectId();
 
 let server: Server;
 let baseUrl: string;
 
 const createWorkflowCalls: unknown[] = [];
 const listedTenantIds: Types.ObjectId[] = [];
+const graphUpdateCalls: Array<{
+  tenantId: Types.ObjectId;
+  workflowId: string;
+  graph: typeof validGraph;
+}> = [];
+const deleteWorkflowCalls: Array<{
+  tenantId: Types.ObjectId;
+  workflowId: string;
+}> = [];
 
 const resolver: TenantResolver = {
   async resolverTenant(apiKey: string) {
-    if (apiKey !== "valid-test-key") {
-      return null;
-    }
+    if (apiKey !== "valid-test-key" && apiKey !== "other-test-key") return null;
 
     // Keep the test independent of the real database.
     return {
-      tenantId,
+      tenantId: apiKey === "valid-test-key" ? tenantId : otherTenantId,
     } as NonNullable<
       Awaited<ReturnType<TenantResolver["resolverTenant"]>>
     >;
@@ -45,7 +54,7 @@ const createdWorkflow = {
 const service = {
   async createWorkflow(command: {
     tenantId: Types.ObjectId;
-    input: { name: string; description?: string; graph: typeof validGraph };
+    input: { name: string; description?: string; graph: WorkflowGraph };
   }) {
     createWorkflowCalls.push(command);
 
@@ -61,6 +70,19 @@ const service = {
   async listWorkflows(requestedTenantId: Types.ObjectId) {
     listedTenantIds.push(requestedTenantId);
     return [];
+  },
+
+  async updateWorkflow({ tenantId: requestedTenantId, workflowId, input }: {
+    tenantId: Types.ObjectId;
+    workflowId: Types.ObjectId;
+    input: { name?: string; description?: string; graph?: typeof validGraph };
+  }) {
+    return {
+      ...createdWorkflow,
+      _id: workflowId.toString(),
+      tenantId: requestedTenantId,
+      ...input,
+    };
   },
 };
 
@@ -115,6 +137,53 @@ test("rejects an unresolved API key", async () => {
   });
 
   assert.equal(response.status, 401);
+});
+
+test("deletes a workflow using the authenticated tenant context", async () => {
+  const callsBefore = deleteWorkflowCalls.length;
+  const response = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269`,
+    { method: "DELETE", headers: { "x-api-key": "valid-test-key" } },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(deleteWorkflowCalls.length, callsBefore + 1);
+  assert.equal(deleteWorkflowCalls.at(-1)?.tenantId.toString(), tenantId.toString());
+  assert.equal(deleteWorkflowCalls.at(-1)?.workflowId, "6ad9a2f75b4a085ee3c2c269");
+});
+
+test("requires tenant authentication before deleting a workflow", async () => {
+  const response = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269`,
+    { method: "DELETE" },
+  );
+  assert.equal(response.status, 401);
+});
+
+test("rejects invalid IDs and returns not found for missing or other-tenant workflows", async () => {
+  const callsBefore = deleteWorkflowCalls.length;
+  const invalidId = await fetch(`${baseUrl}/invalid-id`, {
+    method: "DELETE",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+  const missing = await fetch(`${baseUrl}/6ad9a2f75b4a085ee3c2c260`, {
+    method: "DELETE",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+  const otherTenant = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269`,
+    { method: "DELETE", headers: { "x-api-key": "other-test-key" } },
+  );
+
+  assert.equal(invalidId.status, 400);
+  assert.equal(missing.status, 404);
+  assert.equal(otherTenant.status, 404);
+  assert.equal(deleteWorkflowCalls.length, callsBefore + 2);
+  assert.equal(deleteWorkflowCalls.at(-1)?.tenantId.toString(), otherTenantId.toString());
+  assert.deepEqual((await otherTenant.json()).error, {
+    code: "WORKFLOW_NOT_FOUND",
+    message: "Workflow not found",
+  });
 });
 
 test("creates a workflow using the trusted tenant context", async () => {
@@ -227,4 +296,125 @@ test("rejects a blank workflow name", async () => {
   });
 
   assert.equal(response.status, 400);
+});
+
+test("updates the graph using the authenticated tenant context", async () => {
+  const response = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269/graph`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "valid-test-key",
+      },
+      body: JSON.stringify({ graph: validGraph }),
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(graphUpdateCalls.at(-1)?.tenantId.toString(), tenantId.toString());
+  assert.equal(graphUpdateCalls.at(-1)?.workflowId, "6ad9a2f75b4a085ee3c2c269");
+  assert.deepEqual(graphUpdateCalls.at(-1)?.graph, validGraph);
+});
+
+test("rejects graph updates with invalid IDs or invalid graphs", async () => {
+  const callsBefore = graphUpdateCalls.length;
+  const invalidIdResponse = await fetch(`${baseUrl}/invalid/graph`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": "valid-test-key",
+    },
+    body: JSON.stringify({ graph: validGraph }),
+  });
+  const invalidGraphResponse = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269/graph`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "valid-test-key",
+      },
+      body: JSON.stringify({ graph: { version: 2, nodes: [], edges: [] } }),
+    },
+  );
+  const conditionNode = validGraph.nodes.find(
+    (node) => node.type === "condition",
+  );
+  assert.ok(conditionNode);
+  const missingConditionConfig: WorkflowGraph = structuredClone(validGraph);
+  delete missingConditionConfig.nodes.find(
+    (node) => node.type === "condition",
+  )!.data.config;
+  const missingConfigResponse = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269/graph`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "valid-test-key",
+      },
+      body: JSON.stringify({ graph: missingConditionConfig }),
+    },
+  );
+  const unsupportedConditionConfig: WorkflowGraph = structuredClone(validGraph);
+  unsupportedConditionConfig.nodes.find(
+    (node) => node.type === "condition",
+  )!.data.config = {
+    type: "group",
+    logic: "and",
+    clauses: [{ left: "approved", op: "equals", right: true }],
+  };
+  const unsupportedConfigResponse = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269/graph`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "valid-test-key",
+      },
+      body: JSON.stringify({ graph: unsupportedConditionConfig }),
+    },
+  );
+  const malformedShapeResponse = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269/graph`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "valid-test-key",
+      },
+      body: JSON.stringify({ graph: validGraph, tenantId: new Types.ObjectId() }),
+    },
+  );
+
+  assert.equal(invalidIdResponse.status, 400);
+  assert.equal(invalidGraphResponse.status, 400);
+  assert.equal(missingConfigResponse.status, 400);
+  assert.equal(unsupportedConfigResponse.status, 400);
+  assert.equal(malformedShapeResponse.status, 400);
+  assert.equal(graphUpdateCalls.length, callsBefore);
+});
+
+test("rejects syntactically malformed JSON without exposing parser details", async () => {
+  const callsBefore = graphUpdateCalls.length;
+  const response = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269/graph`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "valid-test-key",
+      },
+      body: '{"graph":',
+    },
+  );
+  const body = (await response.json()) as {
+    error?: { code?: string; message?: string };
+  };
+
+  assert.equal(response.status, 400);
+  assert.equal(body.error?.code, "INVALID_JSON");
+  assert.equal(body.error?.message, "Request body must be valid JSON.");
+  assert.equal(graphUpdateCalls.length, callsBefore);
 });

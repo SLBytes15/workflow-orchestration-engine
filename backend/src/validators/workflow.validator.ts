@@ -1,5 +1,6 @@
 import {
   validateWorkflowGraph,
+  validateConditionConfigurations,
   type WorkflowGraph,
 } from "./workflow-graph.validator";
 
@@ -69,9 +70,15 @@ export function validateCreateWorkflow(input: unknown): ValidationResult {
   if (body.graph === undefined) {
     errors.push("graph is required");
   } else {
-    errors.push(
-      ...validateWorkflowGraph(body.graph).map((error) => `graph: ${error}`),
-    );
+    const graphErrors = validateWorkflowGraph(body.graph);
+    errors.push(...graphErrors.map((error) => `graph: ${error}`));
+    if (graphErrors.length === 0) {
+      errors.push(
+        ...validateConditionConfigurations(body.graph).map(
+          (error) => `graph: ${error}`,
+        ),
+      );
+    }
   }
 
 
@@ -96,6 +103,7 @@ export function validateCreateWorkflow(input: unknown): ValidationResult {
 export interface UpdateWorkflowInput {
   name?: string;
   description?: string;
+  graph?: WorkflowGraph;
 }
 
 export function validateUpdateWorkflow(
@@ -110,7 +118,7 @@ export function validateUpdateWorkflow(
 
   const body = input as Record<string, unknown>;
   const errors: string[] = [];
-  const allowedFields = ["name", "description"];
+  const allowedFields = ["name", "description", "graph"];
   const providedFields = Object.keys(body);
 
   if (providedFields.length === 0) {
@@ -152,6 +160,14 @@ export function validateUpdateWorkflow(
     }
   }
 
+  let graph: WorkflowGraph | undefined;
+
+  if (body.graph !== undefined) {
+    const graphErrors = validateWorkflowGraph(body.graph);
+    errors.push(...graphErrors.map((error) => `graph: ${error}`));
+    if (graphErrors.length === 0) graph = body.graph as WorkflowGraph;
+  }
+
   if (errors.length > 0) {
     return { valid: false, errors };
   }
@@ -160,6 +176,7 @@ export function validateUpdateWorkflow(
 
   if (name !== undefined) data.name = name;
   if (description !== undefined) data.description = description;
+  if (graph !== undefined) data.graph = graph;
 
   return { valid: true, errors: [], data };
 }

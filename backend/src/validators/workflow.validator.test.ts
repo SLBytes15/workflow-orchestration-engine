@@ -4,6 +4,7 @@ import {
   validateCreateWorkflow,
   validateUpdateWorkflow,
 } from "./workflow.validator";
+import type { WorkflowGraph } from "./workflow-graph.validator";
 
 describe("validateCreateWorkflow", () => {
 
@@ -179,10 +180,40 @@ it("rejects an invalid graph", () => {
   assert.ok(result.errors.some((error) => error.includes("trigger")));
 });
 
+it("rejects missing and unsupported condition configurations", () => {
+  const configs: unknown[] = [
+    undefined,
+    {
+      type: "group",
+      logic: "and",
+      clauses: [{ left: "approved", op: "equals", right: true }],
+    },
+    {
+      type: "clause",
+      clause: { left: "approved", op: "matches", right: "true" },
+    },
+  ];
+  for (const config of configs) {
+    const graph = structuredClone(validGraph);
+    if (config === undefined) {
+      delete graph.nodes[1].data.config;
+    } else {
+      graph.nodes[1].data.config = config;
+    }
+
+    const result = validateCreateWorkflow({
+      name: "Condition workflow",
+      graph,
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.includes("condition clause")));
+  }
+});
+
 });
 
 
-const validGraph = {
+const validGraph: WorkflowGraph = {
   version: 1 as const,
   nodes: [
     {
@@ -195,7 +226,14 @@ const validGraph = {
       id: "condition-1",
       type: "condition" as const,
       position: { x: 350, y: 100 },
-      data: { type: "condition" as const, label: "Payment approved?" },
+      data: {
+        type: "condition" as const,
+        label: "Payment approved?",
+        config: {
+          type: "clause",
+          clause: { left: "approved", op: "equals", right: true },
+        },
+      },
     },
     {
       id: "task-1",

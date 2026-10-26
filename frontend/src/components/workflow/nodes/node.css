@@ -61,6 +61,63 @@
   border-left-color: #b7791f;
 }
 
+.node-preview__condition-editor {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #cbd5e0;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.node-preview__condition-editor label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.node-preview__condition-editor input,
+.node-preview__condition-editor select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #a0aec0;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.node-preview__condition-editor button {
+  justify-self: start;
+}
+
+.node-preview__help {
+  margin: -4px 0 0;
+  color: #4a5568;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.node-preview__condition-summary {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid #4c51bf;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: #312e81;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.node-preview__condition-editor code {
+  overflow-wrap: anywhere;
+}
+
 .node-preview {
   margin-top: 40px;
   padding: 24px;
@@ -328,5 +385,10 @@
 
   .node-preview__canvas {
     height: 480px;
+  }
+
+  .node-preview__condition-editor {
+    max-width: none;
+    padding: 12px;
   }
 }

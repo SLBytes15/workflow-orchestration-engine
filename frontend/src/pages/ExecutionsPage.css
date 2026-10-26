@@ -1,4 +1,4 @@
-﻿.executions-page {
+.executions-page {
   width: 100%;
   max-width: 1100px;
   margin: 0 auto;
@@ -203,4 +203,33 @@
   .executions-page__details {
     padding: 16px;
   }
+}
+
+.executions-page__status--compensating,
+.executions-page__status--running {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.executions-page__status--compensated {
+  background: #dcfce7;
+  color: #166534;
+}
+.executions-page__status--compensation_failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.executions-page__status--pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+.executions-page__compensation {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+}
+.executions-page__compensation p {
+  margin: 6px 0;
+  overflow-wrap: anywhere;
 }

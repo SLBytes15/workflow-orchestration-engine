@@ -6,43 +6,138 @@ import {
   type WorkflowExecution,
 } from '../api/executionApi'
 import './ExecutionsPage.css'
+
 type SavedWorkflow = {
   id: string
   name: string
 }
+
 const PAGE_SIZE = 20
+
 function getId(item: CreatedWorkflow): string {
   return String(item.id ?? item._id ?? '')
 }
-function getErrorText(error: WorkflowExecution['error']): string {
-  if (typeof error === 'string') return error
-  return error?.message ?? ''
+
+function sanitizeErrorMessage(message: string): string {
+  const cleaned = message
+    .replace(/https?:\/\/\S+/gi, '[technical details hidden]')
+    .replace(/\b(?:at\s+\S+.*)/gi, '[technical details hidden]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+  if (!cleaned) {
+    return 'An unexpected error occurred.'
+  }
+
+  return cleaned.length > 240
+    ? `${cleaned.slice(0, 237)}...`
+    : cleaned
 }
+
+function getErrorText(error: WorkflowExecution['error']): string {
+  const message =
+    typeof error === 'string'
+      ? error
+      : error?.message ?? ''
+
+  return sanitizeErrorMessage(message)
+}
+
+function getStatusLabel(
+  status: WorkflowExecution['status'] | string,
+): string {
+  switch (status) {
+    case 'queued':
+      return 'Queued'
+    case 'running':
+      return 'Running'
+    case 'completed':
+      return 'Completed'
+    case 'failed':
+      return 'Failed'
+    case 'compensating':
+      return 'Compensating'
+    case 'compensated':
+      return 'Compensated'
+    case 'compensation_failed':
+      return 'Compensation failed'
+    default:
+      return 'Status unavailable'
+  }
+}
+
+function getStatusClass(
+  status: WorkflowExecution['status'] | string,
+): string {
+  switch (status) {
+    case 'queued':
+    case 'running':
+    case 'completed':
+    case 'failed':
+    case 'compensating':
+    case 'compensated':
+    case 'compensation_failed':
+      return `executions-page__status--${status}`
+    default:
+      return 'executions-page__status--unknown'
+  }
+}
+
 function formatDate(value?: string | null): string {
   if (!value) return 'Not available'
+
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? 'Invalid timestamp' : date.toLocaleString()
+
+  return Number.isNaN(date.getTime())
+    ? 'Invalid timestamp'
+    : date.toLocaleString()
 }
-function ExecutionsPage({ tenantApiKey }: { tenantApiKey?: string }) {
+
+function getRequestError(
+  error: unknown,
+  fallback: string,
+): string {
+  if (error instanceof Error) {
+    return sanitizeErrorMessage(error.message)
+  }
+
+  return fallback
+}
+
+function ExecutionsPage({
+  tenantApiKey,
+}: {
+  tenantApiKey?: string
+}) {
   const [workflows, setWorkflows] = useState<SavedWorkflow[]>([])
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('')
   const [executions, setExecutions] = useState<WorkflowExecution[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
+
   const [loadingWorkflows, setLoadingWorkflows] = useState(true)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+
   const [workflowError, setWorkflowError] = useState('')
   const [historyError, setHistoryError] = useState('')
+
   const [details, setDetails] = useState<WorkflowExecution | null>(null)
   const [detailsLoadingId, setDetailsLoadingId] = useState('')
   const [detailsError, setDetailsError] = useState('')
+
   const [refreshToken, setRefreshToken] = useState(0)
+  const historyRequestId = useRef(0)
+  const detailsRequestId = useRef(0)
+
   useEffect(() => {
     let cancelled = false
+
     async function loadWorkflows() {
       setLoadingWorkflows(true)
       setWorkflowError('')
+
       if (!tenantApiKey?.trim()) {
         setWorkflows([])
         setSelectedWorkflowId('')
@@ -50,16 +145,21 @@ function ExecutionsPage({ tenantApiKey }: { tenantApiKey?: string }) {
         setLoadingWorkflows(false)
         return
       }
+
       try {
         const result = await getWorkflows(tenantApiKey)
+
         if (cancelled) return
+
         const saved = result.workflows
           .map((item) => ({
             id: getId(item),
             name: item.name?.trim() || 'Untitled workflow',
           }))
           .filter((item) => item.id.length > 0)
+
         setWorkflows(saved)
+
         setSelectedWorkflowId((current) =>
           saved.some((item) => item.id === current)
             ? current
@@ -68,94 +168,104 @@ function ExecutionsPage({ tenantApiKey }: { tenantApiKey?: string }) {
       } catch (error) {
         if (!cancelled) {
           setWorkflowError(
-            error instanceof Error ? error.message : 'Unable to load saved workflows.',
+            getRequestError(error, 'Unable to load saved workflows.'),
           )
         }
       } finally {
-        if (!cancelled) setLoadingWorkflows(false)
+        if (!cancelled) {
+          setLoadingWorkflows(false)
+        }
       }
     }
+
     void loadWorkflows()
+
     return () => {
       cancelled = true
     }
   }, [tenantApiKey])
 
-  const historyRequestId = useRef(0)
+  const loadHistory = useCallback(
+    async (append: boolean, cursor?: string | null) => {
+      const requestId = ++historyRequestId.current
 
-  const loadHistory = useCallback(async (append: boolean, cursor?: string | null) => {
-    const requestId = ++historyRequestId.current
-
-    if (!tenantApiKey?.trim() || !selectedWorkflowId) {
-      setExecutions([])
-      setNextCursor(null)
-      setHasMore(false)
-      setHistoryError('')
-      setLoadingHistory(false)
-      setLoadingMore(false)
-      return
-    }
-
-    if (append) setLoadingMore(true)
-    else {
-      setLoadingHistory(true)
-      setHistoryError('')
-      setDetails(null)
-      setDetailsError('')
-    }
-
-    try {
-      const result = await getWorkflowExecutions(
-        selectedWorkflowId,
-        tenantApiKey,
-        {
-          limit: PAGE_SIZE,
-          ...(append && cursor ? { cursor } : {}),
-        },
-      )
-
-      if (requestId !== historyRequestId.current) return
-
-      setExecutions((current) => {
-        if (!append) return result.executions
-        const seen = new Set(current.map((item) => item.id ?? item._id))
-        return [
-          ...current,
-          ...result.executions.filter(
-            (item) => !seen.has(item.id ?? item._id),
-          ),
-        ]
-      })
-      setNextCursor(result.pagination.nextCursor)
-      setHasMore(result.pagination.hasMore)
-    } catch (error) {
-      if (requestId !== historyRequestId.current) return
-      setHistoryError(
-        error instanceof Error ? error.message : 'Unable to load execution history.',
-      )
-    } finally {
-      if (requestId === historyRequestId.current) {
+      if (!tenantApiKey?.trim() || !selectedWorkflowId) {
+        setExecutions([])
+        setNextCursor(null)
+        setHasMore(false)
+        setHistoryError('')
         setLoadingHistory(false)
         setLoadingMore(false)
+        return
       }
-    }
-  }, [tenantApiKey, selectedWorkflowId])
+
+      if (append) {
+        setLoadingMore(true)
+      } else {
+        setLoadingHistory(true)
+        setHistoryError('')
+        setDetails(null)
+        setDetailsError('')
+      }
+
+      try {
+        const result = await getWorkflowExecutions(
+          selectedWorkflowId,
+          tenantApiKey,
+          {
+            limit: PAGE_SIZE,
+            ...(append && cursor ? { cursor } : {}),
+          },
+        )
+
+        if (requestId !== historyRequestId.current) return
+
+        setExecutions((current) => {
+          if (!append) return result.executions
+
+          const seen = new Set(
+            current.map((item) => item.id ?? item._id),
+          )
+
+          return [
+            ...current,
+            ...result.executions.filter(
+              (item) => !seen.has(item.id ?? item._id),
+            ),
+          ]
+        })
+
+        setNextCursor(result.pagination.nextCursor)
+        setHasMore(result.pagination.hasMore)
+      } catch (error) {
+        if (requestId !== historyRequestId.current) return
+
+        setHistoryError(
+          getRequestError(error, 'Unable to load execution history.'),
+        )
+      } finally {
+        if (requestId === historyRequestId.current) {
+          setLoadingHistory(false)
+          setLoadingMore(false)
+        }
+      }
+    },
+    [tenantApiKey, selectedWorkflowId],
+  )
 
   useEffect(() => {
     void loadHistory(false)
+
     return () => {
       historyRequestId.current += 1
     }
   }, [loadHistory, refreshToken])
-
-  const detailsRequestId = useRef(0)
 
   async function showDetails(execution: WorkflowExecution) {
     const requestId = ++detailsRequestId.current
     const id = execution.id ?? execution._id
 
     if (!id || !tenantApiKey?.trim()) {
-      setDetails(null)
       setDetailsError(
         'Execution details are unavailable because the record has no ID or API authentication is missing.',
       )
@@ -172,8 +282,9 @@ function ExecutionsPage({ tenantApiKey }: { tenantApiKey?: string }) {
       setDetails(result)
     } catch (error) {
       if (requestId !== detailsRequestId.current) return
+
       setDetailsError(
-        error instanceof Error ? error.message : 'Unable to load execution details.',
+        getRequestError(error, 'Unable to load execution details.'),
       )
     } finally {
       if (requestId === detailsRequestId.current) {
@@ -181,99 +292,214 @@ function ExecutionsPage({ tenantApiKey }: { tenantApiKey?: string }) {
       }
     }
   }
+
   return (
     <section className="executions-page">
       <header className="executions-page__header">
         <div>
-          <p className="executions-page__eyebrow">WORKFLOW MONITORING</p>
+          <p className="executions-page__eyebrow">
+            WORKFLOW MONITORING
+          </p>
           <h1>Executions</h1>
-          <p>Inspect real execution history returned by the backend.</p>
+          <p>
+            Inspect execution history returned by the backend.
+          </p>
         </div>
+
         <button
           type="button"
           onClick={() => setRefreshToken((value) => value + 1)}
-          disabled={loadingHistory || loadingWorkflows || !selectedWorkflowId}
+          disabled={
+            loadingHistory ||
+            loadingWorkflows ||
+            !selectedWorkflowId
+          }
         >
           Refresh history
         </button>
       </header>
+
       <div className="executions-page__selector">
-        <label htmlFor="execution-workflow">Saved workflow</label>
+        <label htmlFor="execution-workflow">
+          Saved workflow
+        </label>
+
         <select
           id="execution-workflow"
           value={selectedWorkflowId}
           onChange={(event) => {
+            detailsRequestId.current += 1
+            setDetailsLoadingId('')
             setSelectedWorkflowId(event.target.value)
             setExecutions([])
             setNextCursor(null)
             setHasMore(false)
             setDetails(null)
+            setDetailsError('')
           }}
           disabled={loadingWorkflows || workflows.length === 0}
         >
-          {workflows.length === 0 && <option value="">No saved workflows</option>}
+          {workflows.length === 0 && (
+            <option value="">No saved workflows</option>
+          )}
+
           {workflows.map((workflow) => (
-            <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+            <option key={workflow.id} value={workflow.id}>
+              {workflow.name}
+            </option>
           ))}
         </select>
       </div>
-      {loadingWorkflows && <p role="status">Loading saved workflows…</p>}
-      {workflowError && <p className="executions-page__error" role="alert">{workflowError}</p>}
-      {!loadingWorkflows && !workflowError && workflows.length === 0 && (
-        <div className="executions-page__state">
-          <h2>No saved workflows</h2>
-          <p>Create and save a workflow before viewing its execution history.</p>
-        </div>
+
+      {loadingWorkflows && (
+        <p role="status" aria-live="polite">
+          Loading saved workflows…
+        </p>
       )}
+
+      {workflowError && (
+        <p className="executions-page__error" role="alert">
+          {workflowError}
+        </p>
+      )}
+
+      {!loadingWorkflows &&
+        !workflowError &&
+        workflows.length === 0 && (
+          <div className="executions-page__state">
+            <h2>No saved workflows</h2>
+            <p>
+              Create and save a workflow before viewing its
+              execution history.
+            </p>
+          </div>
+        )}
+
       {selectedWorkflowId && (
         <section aria-labelledby="execution-history-heading">
           <div className="executions-page__section-heading">
-            <h2 id="execution-history-heading">Execution history</h2>
+            <h2 id="execution-history-heading">
+              Execution history
+            </h2>
             <span>{executions.length} loaded</span>
           </div>
-          {loadingHistory && <p role="status">Loading execution history…</p>}
-          {historyError && <p className="executions-page__error" role="alert">{historyError}</p>}
-          {!loadingHistory && !historyError && executions.length === 0 && (
-            <div className="executions-page__state">
-              <h3>No executions yet</h3>
-              <p>The backend returned no execution records for this workflow.</p>
-            </div>
+
+          {loadingHistory && (
+            <p role="status" aria-live="polite">
+              Loading execution history…
+            </p>
           )}
+
+          {historyError && (
+            <p className="executions-page__error" role="alert">
+              {historyError}
+            </p>
+          )}
+
+          {!loadingHistory &&
+            !historyError &&
+            executions.length === 0 && (
+              <div className="executions-page__state">
+                <h3>No executions yet</h3>
+                <p>
+                  The backend returned no execution records
+                  for this workflow.
+                </p>
+              </div>
+            )}
+
           {executions.length > 0 && (
             <div className="executions-page__list">
               {executions.map((execution, index) => {
-                const id = execution.id ?? execution._id ?? `${execution.workflowId}-${index}`
+                const id =
+                  execution.id ??
+                  execution._id ??
+                  `${execution.workflowId}-${index}`
+
                 const errorText = getErrorText(execution.error)
+
                 return (
-                  <article className="executions-page__item" key={id}>
+                  <article
+                    className="executions-page__item"
+                    key={id}
+                  >
                     <div className="executions-page__item-top">
                       <div>
-                        <h3>Execution {execution.id ?? execution._id ?? `#${index + 1}`}</h3>
+                        <h3>
+                          Execution{' '}
+                          {execution.id ??
+                            execution._id ??
+                            `#${index + 1}`}
+                        </h3>
+
                         <p className="executions-page__muted">
-                          Created: {formatDate(execution.createdAt ?? execution.startedAt)}
+                          Created:{' '}
+                          {formatDate(
+                            execution.createdAt ??
+                              execution.startedAt,
+                          )}
                         </p>
                       </div>
-                      <span className={`executions-page__status executions-page__status--${execution.status}`}>
-                        {execution.status}
+
+                      <span
+                        className={`executions-page__status ${getStatusClass(
+                          execution.status,
+                        )}`}
+                        role="status"
+                        aria-label={`Execution status: ${getStatusLabel(
+                          execution.status,
+                        )}`}
+                      >
+                        {getStatusLabel(execution.status)}
                       </span>
                     </div>
+
                     <dl className="executions-page__metadata">
-                      <div><dt>Started</dt><dd>{formatDate(execution.startedAt)}</dd></div>
-                      <div><dt>Completed</dt><dd>{formatDate(execution.completedAt)}</dd></div>
-                      <div><dt>Workflow version</dt><dd>{execution.workflowVersion ?? 'Not available'}</dd></div>
-                      <div><dt>Node results</dt><dd>{execution.nodeResults?.length ?? 0}</dd></div>
+                      <div>
+                        <dt>Started</dt>
+                        <dd>{formatDate(execution.startedAt)}</dd>
+                      </div>
+
+                      <div>
+                        <dt>Completed</dt>
+                        <dd>{formatDate(execution.completedAt)}</dd>
+                      </div>
+
+                      <div>
+                        <dt>Workflow version</dt>
+                        <dd>
+                          {execution.workflowVersion ??
+                            'Not available'}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt>Node results</dt>
+                        <dd>
+                          {execution.nodeResults?.length ?? 0}
+                        </dd>
+                      </div>
                     </dl>
+
                     {errorText && (
-                      <p className="executions-page__error" role="status">
+                      <p
+                        className="executions-page__error"
+                        role="status"
+                      >
                         Error: {errorText}
                       </p>
                     )}
+
                     <button
                       type="button"
                       onClick={() => void showDetails(execution)}
-                      disabled={detailsLoadingId === (execution.id ?? execution._id)}
+                      disabled={
+                        detailsLoadingId ===
+                        (execution.id ?? execution._id)
+                      }
                     >
-                      {detailsLoadingId === (execution.id ?? execution._id)
+                      {detailsLoadingId ===
+                      (execution.id ?? execution._id)
                         ? 'Loading details…'
                         : 'View details'}
                     </button>
@@ -282,45 +508,144 @@ function ExecutionsPage({ tenantApiKey }: { tenantApiKey?: string }) {
               })}
             </div>
           )}
+
           {hasMore && (
             <button
               className="executions-page__load-more"
               type="button"
               onClick={() => void loadHistory(true, nextCursor)}
-              disabled={loadingMore || loadingHistory || !nextCursor}
+              disabled={
+                loadingMore ||
+                loadingHistory ||
+                !nextCursor
+              }
             >
               {loadingMore ? 'Loading…' : 'Load more'}
             </button>
           )}
         </section>
       )}
-      {detailsError && <p className="executions-page__error" role="alert">{detailsError}</p>}
+
+      {detailsError && (
+        <p className="executions-page__error" role="alert">
+          {detailsError}
+        </p>
+      )}
+
       {details && (
-        <section className="executions-page__details" aria-labelledby="execution-details-heading">
+        <section
+          className="executions-page__details"
+          aria-labelledby="execution-details-heading"
+        >
           <div className="executions-page__section-heading">
-            <h2 id="execution-details-heading">Execution details</h2>
-            <button type="button" onClick={() => setDetails(null)}>Close details</button>
+            <h2 id="execution-details-heading">
+              Execution details
+            </h2>
+
+            <button
+              type="button"
+              onClick={() => {
+                detailsRequestId.current += 1
+                setDetailsLoadingId('')
+                setDetails(null)
+                setDetailsError('')
+              }}
+            >
+              Close details
+            </button>
           </div>
-          <p><strong>Status:</strong> {details.status}</p>
-          <p><strong>Workflow ID:</strong> {details.workflowId}</p>
-          {details.currentNodeId && <p><strong>Current node:</strong> {details.currentNodeId}</p>}
-          {getErrorText(details.error) && (
-            <p className="executions-page__error">Error: {getErrorText(details.error)}</p>
+
+          <p>
+            <strong>Status:</strong>{' '}
+            <span
+              className={`executions-page__status ${getStatusClass(
+                details.status,
+              )}`}
+            >
+              {getStatusLabel(details.status)}
+            </span>
+          </p>
+
+          <p>
+            <strong>Workflow ID:</strong> {details.workflowId}
+          </p>
+
+          {details.currentNodeId && (
+            <p>
+              <strong>Current node:</strong>{' '}
+              {details.currentNodeId}
+            </p>
           )}
+
+          {getErrorText(details.error) && (
+            <p className="executions-page__error" role="status">
+              Error: {getErrorText(details.error)}
+            </p>
+          )}
+
           <h3>Node results</h3>
+
           {!details.nodeResults?.length ? (
-            <p>No node results were returned for this execution.</p>
+            <p>
+              No node results were returned for this execution.
+            </p>
           ) : (
             <ul className="executions-page__node-list">
               {details.nodeResults.map((node, index) => (
                 <li key={`${node.nodeId}-${index}`}>
                   <strong>{node.nodeId}</strong>
                   <span>{node.status}</span>
+
                   {node.error && (
-                    <p>{typeof node.error === 'string' ? node.error : node.error.message}</p>
+                    <p className="executions-page__error">
+                      {sanitizeErrorMessage(
+                        typeof node.error === 'string'
+                          ? node.error
+                          : node.error.message ?? '',
+                      )}
+                    </p>
                   )}
+
+                  {node.compensation && (
+                    <div className="executions-page__compensation">
+                      <p>
+                        <strong>Compensation status:</strong>{' '}
+                        <span
+                          className={`executions-page__status executions-page__status--${node.compensation.status}`}
+                        >
+                          {node.compensation.status}
+                        </span>
+                      </p>
+
+                      {node.compensation.startedAt && (
+                        <p>
+                          <strong>Compensation started:</strong>{' '}
+                          {formatDate(node.compensation.startedAt)}
+                        </p>
+                      )}
+
+                      {node.compensation.completedAt && (
+                        <p>
+                          <strong>Compensation completed:</strong>{' '}
+                          {formatDate(node.compensation.completedAt)}
+                        </p>
+                      )}
+
+                      {node.compensation.error && (
+                        <p className="executions-page__error">
+                          Compensation error:{' '}
+                          {sanitizeErrorMessage(
+                            node.compensation.error.message ?? "Compensation failed.",
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {node.output !== undefined && (
-                    <pre>{JSON.stringify(node.output, null, 2)}</pre>
+                    <pre>
+                      {JSON.stringify(node.output, null, 2)}
+                    </pre>
                   )}
                 </li>
               ))}
@@ -331,4 +656,5 @@ function ExecutionsPage({ tenantApiKey }: { tenantApiKey?: string }) {
     </section>
   )
 }
+
 export default ExecutionsPage

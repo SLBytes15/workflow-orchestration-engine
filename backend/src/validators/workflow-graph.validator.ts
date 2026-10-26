@@ -58,6 +58,54 @@ export interface WorkflowGraph {
   }>;
 }
 
+const RUNTIME_CONDITION_OPERATORS = new Set<ConditionOp>([
+  "equals",
+  "notEquals",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "contains",
+  "startsWith",
+  "truthy",
+]);
+
+export function validateConditionConfigurations(value: unknown): string[] {
+  if (!isRecord(value) || !Array.isArray(value.nodes)) {
+    return ["Graph nodes must be an array"];
+  }
+
+  const errors: string[] = [];
+
+  value.nodes.forEach((node: unknown, index: number) => {
+    if (!isRecord(node) || node.type !== "condition" || !isRecord(node.data)) {
+      return;
+    }
+
+    const config = node.data.config;
+    const clause =
+      isRecord(config) && config.type === "clause" && isRecord(config.clause)
+        ? config.clause
+        : null;
+
+    if (
+      !clause ||
+      typeof clause.left !== "string" ||
+      !clause.left.trim() ||
+      typeof clause.op !== "string" ||
+      !RUNTIME_CONDITION_OPERATORS.has(clause.op as ConditionOp) ||
+      (clause.op !== "truthy" &&
+        !Object.prototype.hasOwnProperty.call(clause, "right"))
+    ) {
+      errors.push(
+        `nodes[${index}].data.config must contain a supported condition clause`,
+      );
+    }
+  });
+
+  return errors;
+}
+
 const SUPPORTED_NODE_TYPES = new Set<string>(["trigger", "task", "condition"]);
 
 export function validateWorkflowGraph(value: unknown): string[] {
@@ -149,6 +197,8 @@ export function validateWorkflowGraph(value: unknown): string[] {
 
     if (typeof data.label !== "string" || !data.label.trim()) {
       errors.push(`${path}.data.label must be a non-empty string`);
+    } else if (data.label.trim().length > 120) {
+      errors.push(`${path}.data.label must not exceed 120 characters`);
     }
 
     if (validId && validType && type === "condition") {
