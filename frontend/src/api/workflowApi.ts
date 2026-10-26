@@ -214,3 +214,30 @@ export async function updateWorkflow(
 
   return (await response.json()) as CreateWorkflowResponse
 }
+
+export async function deleteWorkflow(
+  workflowId: string,
+  tenantApiKey: string,
+): Promise<void> {
+  if (!tenantApiKey.trim()) {
+    throw new Error('API authentication is not configured.')
+  }
+
+  const response = await fetch(
+    `${getApiBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        'X-API-Key': tenantApiKey,
+      },
+    },
+  )
+
+  if (!response.ok) {
+    const result = (await response
+      .json()
+      .catch(() => null)) as WorkflowApiErrorResponse | null
+
+    throw new Error(getApiErrorMessage(result, response.status))
+  }
+}

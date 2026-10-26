@@ -29,7 +29,6 @@ type NodePreviewProps = {
   workflowName?: string;
   initialGraph?: WorkflowGraph | null;
   onGraphChange?: (graph: WorkflowGraph) => void;
-  initialGraph?: WorkflowGraph | null;
   onSaveGraph?: (graph: WorkflowGraph) => void | Promise<void>;
   isSaving?: boolean;
   saveError?: string;
@@ -41,19 +40,21 @@ type NodePreviewProps = {
  * configuration rules. Returns undefined when the node has no clause yet.
  */
 function readConditionClause(
-  config: Record<string, unknown> | undefined,
+  config: unknown,
 ): Record<string, unknown> | undefined {
-  if (typeof config !== "object" || config === null) return undefined;
+  if (!isRecord(config)) return undefined;
   if (!("clause" in config)) return undefined;
 
   const clause = config.clause;
-  if (typeof clause !== "object" || clause === null) return undefined;
+  if (!isRecord(clause)) return undefined;
 
-  return clause as Record<string, unknown>;
+  return clause;
 }
 
-function describeCondition(config: Record<string, unknown> | undefined): string {
+function describeCondition(config: unknown): string {
   if (!config) return "Not configured";
+
+  if (!isRecord(config)) return JSON.stringify(config);
 
   const clause = readConditionClause(config);
   if (!clause) return JSON.stringify(config);
@@ -205,17 +206,71 @@ const initialEdges: WorkflowFlowEdge[] = [
   },
 ];
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getInitialNodes(
+  graph: WorkflowGraph | null | undefined,
+): WorkflowFlowNode[] {
+  if (!graph) return initialNodes;
+
+  return graph.nodes.map((node) => {
+    const { config, ...data } = node.data;
+
+    return {
+      id: node.id,
+      type: node.type,
+      position: node.position,
+      data: {
+        ...data,
+        type: node.type,
+        label: node.data.label,
+        ...(config !== undefined ? { config } : {}),
+      },
+    };
+  });
+}
+
+function getInitialEdges(
+  graph: WorkflowGraph | null | undefined,
+): WorkflowFlowEdge[] {
+  if (!graph) return initialEdges;
+
+  return graph.edges.map((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    ...(edge.sourceHandle !== undefined
+      ? { sourceHandle: edge.sourceHandle }
+      : {}),
+    ...(edge.targetHandle !== undefined
+      ? { targetHandle: edge.targetHandle }
+      : {}),
+    ...(edge.data !== undefined ? { data: edge.data } : {}),
+  }));
+}
+
 const nodeTypes = {
   trigger: TriggerNode,
   task: TaskNode,
   condition: ConditionNode,
 };
 
-function NodePreview({ onGraphChange }: NodePreviewProps) {
+function NodePreview({
+  workflowId,
+  workflowName,
+  initialGraph,
+  onGraphChange,
+  onSaveGraph,
+  isSaving = false,
+  saveError,
+  saveMessage,
+}: NodePreviewProps) {
   const [nodes, setNodes, onNodesChange] =
-    useNodesState<WorkflowFlowNode>(initialNodes);
+    useNodesState<WorkflowFlowNode>(getInitialNodes(initialGraph));
   const [edges, setEdges, onEdgesChange] =
-    useEdgesState<WorkflowFlowEdge>(initialEdges);
+    useEdgesState<WorkflowFlowEdge>(getInitialEdges(initialGraph));
   const [selectedNodeId, setSelectedNodeId] = useState("condition-1");
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
@@ -343,21 +398,6 @@ function NodePreview({ onGraphChange }: NodePreviewProps) {
       )}
       <p>Connect nodes to preview your workflow structure.</p>
       {onSaveGraph && (
-        <button
-          type="button"
-          onClick={() => void handleSaveGraph()}
-          disabled={isSavingGraph}
-        >
-          {isSavingGraph ? "Saving..." : "Save workflow changes"}
-        </button>
-      )}
-      {saveError && <p role="alert">{saveError}</p>}
-      {saveMessage && <p role="status">{saveMessage}</p>}
-      <button type="button" onClick={onAddCondition}>
-        Add condition node
-      </button>
-
-      {onSaveGraph && (
         <div className="workflow-card__actions">
           <button
             type="button"
@@ -481,20 +521,6 @@ function NodePreview({ onGraphChange }: NodePreviewProps) {
           <pre>{JSON.stringify(graphPayload, null, 2)}</pre>
         </details>
       </div>
-      {selectedNode && (
-        <NodeLabelEditor
-          key={`label-${selectedNode.id}`}
-          node={selectedNode}
-          onApply={updateSelectedNodeLabel}
-        />
-      )}
-      {selectedCondition && (
-        <ConditionConfigEditor
-          key={selectedCondition.id}
-          data={selectedCondition.data as ConditionNodeData}
-          onApply={updateSelectedCondition}
-        />
-      )}
     </section>
   );
 }

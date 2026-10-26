@@ -84,6 +84,42 @@ const service = {
       ...input,
     };
   },
+
+  async updateWorkflowGraph(
+    requestedTenantId: Types.ObjectId,
+    workflowId: string,
+    graph: WorkflowGraph,
+  ) {
+    graphUpdateCalls.push({
+      tenantId: requestedTenantId,
+      workflowId,
+      graph,
+    });
+    return {
+      ...createdWorkflow,
+      _id: workflowId,
+      tenantId: requestedTenantId,
+      graph,
+    };
+  },
+
+  async deleteWorkflow(
+    requestedTenantId: Types.ObjectId,
+    workflowId: string,
+  ) {
+    deleteWorkflowCalls.push({
+      tenantId: requestedTenantId,
+      workflowId,
+    });
+    if (
+      !requestedTenantId.equals(tenantId) ||
+      workflowId !== "6ad9a2f75b4a085ee3c2c269"
+    ) {
+      return null;
+    }
+
+    return { ...createdWorkflow, tenantId: requestedTenantId };
+  },
 };
 
 before(async () => {

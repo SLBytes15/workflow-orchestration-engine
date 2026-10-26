@@ -1,7 +1,11 @@
 import { Types } from "mongoose";
 import WorkflowModel from "../models/workflow.model";
 import type { CreateWorkflowInput, UpdateWorkflowInput } from "../validators/workflow.validator";
-import type { WorkflowGraph } from "../validators/workflow-graph.validator";
+import {
+  validateConditionConfigurations,
+  validateWorkflowGraph,
+  type WorkflowGraph,
+} from "../validators/workflow-graph.validator";
 
 
 export interface CreateWorkflowCommand {
@@ -34,6 +38,15 @@ export interface WorkflowServiceDependencies {
     workflowId: Types.ObjectId,
     updates: UpdateWorkflowInput,
   ): Promise<unknown | null>;
+  updateWorkflowGraph?(
+    tenantId: Types.ObjectId,
+    workflowId: Types.ObjectId,
+    graph: WorkflowGraph,
+  ): Promise<unknown | null>;
+  deleteWorkflow?(
+    tenantId: Types.ObjectId,
+    workflowId: Types.ObjectId,
+  ): Promise<unknown | null>;
 }
 
 const databaseDependencies: WorkflowServiceDependencies = {
@@ -54,6 +67,20 @@ const databaseDependencies: WorkflowServiceDependencies = {
       { $set: updates, $inc: { version: 1 } },
       { new: true, runValidators: true },
     ).lean().exec();
+  },
+
+  async updateWorkflowGraph(tenantId, workflowId, graph) {
+    return WorkflowModel.findOneAndUpdate(
+      { _id: workflowId, tenantId },
+      { $set: { graph }, $inc: { version: 1 } },
+      { new: true, runValidators: true },
+    ).lean().exec();
+  },
+
+  async deleteWorkflow(tenantId, workflowId) {
+    return WorkflowModel.findOneAndDelete({ _id: workflowId, tenantId })
+      .lean()
+      .exec();
   },
 };
 
@@ -101,6 +128,52 @@ const record: CreatedWorkflow = {
       }
 
       return dependencies.updateWorkflowRecord(tenantId, workflowId, input);
+    },
+
+    async updateWorkflowGraph(
+      tenantId: Types.ObjectId,
+      workflowId: string,
+      graph: WorkflowGraph,
+    ): Promise<unknown | null> {
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        return null;
+      }
+
+      const graphErrors = validateWorkflowGraph(graph);
+      if (graphErrors.length === 0) {
+        graphErrors.push(...validateConditionConfigurations(graph));
+      }
+      if (graphErrors.length > 0) {
+        throw new Error(`The workflow graph is invalid: ${graphErrors.join("; ")}`);
+      }
+
+      if (!dependencies.updateWorkflowGraph) {
+        throw new Error("Workflow graph updates are not configured");
+      }
+
+      return dependencies.updateWorkflowGraph(
+        tenantId,
+        new Types.ObjectId(workflowId),
+        graph,
+      );
+    },
+
+    async deleteWorkflow(
+      tenantId: Types.ObjectId,
+      workflowId: string,
+    ): Promise<unknown | null> {
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        return null;
+      }
+
+      if (!dependencies.deleteWorkflow) {
+        throw new Error("Workflow deletion is not configured");
+      }
+
+      return dependencies.deleteWorkflow(
+        tenantId,
+        new Types.ObjectId(workflowId),
+      );
     },
   };
 }
