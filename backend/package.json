@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts",
+    "seed:mahak-test-tenants": "tsx scripts/seedMahakTestTenants.ts"
   },
   "keywords": [],
   "author": "",
