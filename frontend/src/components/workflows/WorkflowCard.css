@@ -213,3 +213,67 @@
     gap: 8px;
   }
 }
+
+/* Consistent workflow card button states */
+.workflow-card__open,
+.workflow-card__delete {
+  min-height: 40px;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.workflow-card__open:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.workflow-card__open:focus-visible,
+.workflow-card__delete:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.workflow-card__open:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-card__open,
+  .workflow-card__delete {
+    transition: none;
+  }
+}
+
+/* Consistent workflow card button states */
+.workflow-card__open,
+.workflow-card__delete {
+  min-height: 40px;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.workflow-card__open:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.workflow-card__open:focus-visible,
+.workflow-card__delete:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.workflow-card__open:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-card__open,
+  .workflow-card__delete {
+    transition: none;
+  }
+}
