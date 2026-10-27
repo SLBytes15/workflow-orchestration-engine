@@ -184,10 +184,12 @@
 }
 .app {
   width: 100%;
-  max-width: 900px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 40px 24px;
+  padding: 16px;
   box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
 }
 
 .app h1 {
@@ -197,7 +199,7 @@
 
 @media (max-width: 600px) {
   .app {
-    padding: 24px 16px;
+    padding: 12px 8px;
   }
 
   .app h1 {
@@ -208,11 +210,6 @@
 .app-layout {
   display: flex;
   min-height: 100vh;
-}
-
-.app {
-  flex: 1;
-  min-width: 0;
 }
 
 @media (max-width: 600px) {

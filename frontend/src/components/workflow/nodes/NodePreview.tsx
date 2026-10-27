@@ -16,20 +16,31 @@ import TriggerNode from "./TriggerNode";
 import TaskNode from "./TaskNode";
 import ConditionNode from "./ConditionNode";
 import {
+  createConditionNode,
+  createTaskNode,
+  createTriggerNode,
   NODE_KIND_LABEL,
   type WorkflowFlowEdge,
   type WorkflowFlowNode,
   type WorkflowNodeType,
 } from "./node.types";
 import type { WorkflowGraph } from "../../../api/workflowApi";
-import { validateWorkflowGraph } from "../../../graphValidation";
+import {
+  validateWorkflowGraphDetailed,
+  type GraphValidationError,
+} from "../../../graphValidation";
+import WorkflowWizard from "../wizard/WorkflowWizard";
 
 type NodePreviewProps = {
   workflowId?: string;
   workflowName?: string;
+  workflowDescription?: string;
   initialGraph?: WorkflowGraph | null;
   onGraphChange?: (graph: WorkflowGraph) => void;
-  onSaveGraph?: (graph: WorkflowGraph) => void | Promise<void>;
+  onSaveGraph?: (
+    graph: WorkflowGraph,
+    metadata?: { name?: string; description?: string },
+  ) => void | Promise<void>;
   isSaving?: boolean;
   saveError?: string;
   saveMessage?: string;
@@ -260,6 +271,7 @@ const nodeTypes = {
 function NodePreview({
   workflowId,
   workflowName,
+  workflowDescription,
   initialGraph,
   onGraphChange,
   onSaveGraph,
@@ -273,6 +285,7 @@ function NodePreview({
     useEdgesState<WorkflowFlowEdge>(getInitialEdges(initialGraph));
   const [selectedNodeId, setSelectedNodeId] = useState("condition-1");
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [editorMode, setEditorMode] = useState<"wizard" | "canvas">("wizard");
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId);
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId);
@@ -310,8 +323,8 @@ function NodePreview({
     [nodes, edges],
   );
 
-  const validationErrors = useMemo(
-    () => validateWorkflowGraph(graphPayload),
+  const validationIssues: GraphValidationError[] = useMemo(
+    () => validateWorkflowGraphDetailed(graphPayload),
     [graphPayload],
   );
 
@@ -352,6 +365,47 @@ function NodePreview({
     [selectedNodeId, setNodes],
   );
 
+  const hasTrigger = useMemo(
+    () => nodes.some((node) => node.type === "trigger"),
+    [nodes],
+  );
+
+  const addTriggerNode = useCallback(() => {
+    let index = 1;
+    let id = `trigger-${index}`;
+
+    while (nodes.some((node) => node.id === id)) {
+      index += 1;
+      id = `trigger-${index}`;
+    }
+
+    const newNode = createTriggerNode(id, {
+      x: 250,
+      y: 50,
+    });
+
+    setNodes((currentNodes) => [...currentNodes, newNode]);
+    setSelectedNodeId(id);
+  }, [nodes, setNodes]);
+
+  const addTaskNode = useCallback(() => {
+    let index = nodes.length + 1;
+    let id = `task-${index}`;
+
+    while (nodes.some((node) => node.id === id)) {
+      index += 1;
+      id = `task-${index}`;
+    }
+
+    const newNode = createTaskNode(id, {
+      x: 160 + (nodes.length % 3) * 240,
+      y: 480 + (nodes.length % 2) * 120,
+    });
+
+    setNodes((currentNodes) => [...currentNodes, newNode]);
+    setSelectedNodeId(id);
+  }, [nodes, setNodes]);
+
   const addConditionNode = useCallback(() => {
     let index = nodes.length + 1;
     let id = `condition-${index}`;
@@ -361,18 +415,10 @@ function NodePreview({
       id = `condition-${index}`;
     }
 
-    const newNode: WorkflowFlowNode = {
-      id,
-      type: "condition",
-      position: {
-        x: 160 + (nodes.length % 3) * 240,
-        y: 480 + (nodes.length % 2) * 120,
-      },
-      data: {
-        type: "condition",
-        label: "New condition",
-      },
-    };
+    const newNode = createConditionNode(id, {
+      x: 160 + (nodes.length % 3) * 240,
+      y: 480 + (nodes.length % 2) * 120,
+    });
 
     setNodes((currentNodes) => [...currentNodes, newNode]);
     setSelectedNodeId(id);
@@ -389,138 +435,210 @@ function NodePreview({
 
   return (
     <section className="node-preview">
-      <h2>Workflow Node Preview</h2>
-      {workflowId && (
-        <p role="status">
-          Editing saved workflow: {workflowName ?? "Untitled workflow"} (ID:{" "}
-          {workflowId})
-        </p>
-      )}
-      <p>Connect nodes to preview your workflow structure.</p>
-      {onSaveGraph && (
-        <div className="workflow-card__actions">
+      <div className="node-preview__mode-bar">
+        <div
+          className="node-preview__mode-toggle"
+          role="tablist"
+          aria-label="Workflow Editor View Mode"
+        >
           <button
             type="button"
-            className="workflow-card__run"
-            onClick={() => void onSaveGraph(graphPayload)}
-            disabled={isSaving}
+            role="tab"
+            aria-selected={editorMode === "wizard"}
+            className={`node-preview__mode-btn ${
+              editorMode === "wizard" ? "node-preview__mode-btn--active" : ""
+            }`}
+            onClick={() => setEditorMode("wizard")}
           >
-            {isSaving ? "Saving..." : "Save Changes"}
+            Guided Wizard
           </button>
-          {saveError && <p role="alert">{saveError}</p>}
-          {saveMessage && <p role="status">{saveMessage}</p>}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={editorMode === "canvas"}
+            className={`node-preview__mode-btn ${
+              editorMode === "canvas" ? "node-preview__mode-btn--active" : ""
+            }`}
+            onClick={() => setEditorMode("canvas")}
+          >
+            Visual Canvas
+          </button>
         </div>
-      )}
-
-      <div className="node-preview__toolbar">
-        <button type="button" onClick={addConditionNode}>
-          Add condition node
-        </button>
-        <button
-          type="button"
-          onClick={removeSelectedEdge}
-          disabled={!selectedEdge}
-        >
-          Remove selected edge
-        </button>
-        <span className="node-preview__hint">
-          {selectedEdge
-            ? `Selected edge: ${selectedEdge.id}`
-            : "Select an edge to remove it."}
-        </span>
       </div>
 
-      {validationErrors.length > 0 && (
-        <div className="node-preview__errors" role="alert">
-          <p className="node-preview__errors-title">
-            This graph does not satisfy the workflow contract yet:
-          </p>
-          <ul>
-            {validationErrors.map((error) => (
-              <li key={error}>{error}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="node-preview__workspace">
-        <div className="node-preview__canvas">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-            onEdgeClick={(_, edge) => setSelectedEdgeId(edge.id)}
-            onPaneClick={() => setSelectedEdgeId(null)}
-            deleteKeyCode={["Backspace", "Delete"]}
-            fitView
-          >
-            <Background />
-            <Controls />
-            <MiniMap />
-          </ReactFlow>
-        </div>
-
-        <aside className="node-preview__details" aria-live="polite">
-          <p className="node-preview__eyebrow">Selected node</p>
-
-          {selectedNode ? (
-            <>
-              <h3>{selectedNode.data.label}</h3>
-
-              <dl>
-                <div>
-                  <dt>Type</dt>
-                  <dd>{NODE_KIND_LABEL[selectedNode.data.type]}</dd>
-                </div>
-                <div>
-                  <dt>Node ID</dt>
-                  <dd>{selectedNode.id}</dd>
-                </div>
-                <div>
-                  <dt>Position</dt>
-                  <dd>
-                    x {Math.round(selectedNode.position.x)}, y{" "}
-                    {Math.round(selectedNode.position.y)}
-                  </dd>
-                </div>
-                {selectedNode.data.type === "condition" && (
-                  <div>
-                    <dt>Condition</dt>
-                    <dd>{describeCondition(selectedNode.data.config)}</dd>
-                  </div>
-                )}
-              </dl>
-
-              <NodeLabelEditor
-                key={`label-${selectedNode.id}`}
-                node={selectedNode}
-                onApply={applyLabel}
-              />
-
-              {selectedNode.data.type === "condition" && (
-                <ConditionConfigEditor
-                  key={`config-${selectedNode.id}`}
-                  node={selectedNode}
-                  onApply={applyConditionConfig}
-                />
-              )}
-            </>
-          ) : (
-            <p className="node-preview__note">
-              Select a node on the canvas to edit its label and configuration.
+      {editorMode === "wizard" ? (
+        <WorkflowWizard
+          initialGraph={initialGraph}
+          workflowId={workflowId}
+          workflowName={workflowName}
+          workflowDescription={workflowDescription}
+          onGraphChange={onGraphChange}
+          onSaveGraph={onSaveGraph}
+          isSaving={isSaving}
+          saveError={saveError}
+          saveMessage={saveMessage}
+          onSwitchToVisual={() => setEditorMode("canvas")}
+        />
+      ) : (
+        <>
+          <h2>Workflow Node Preview</h2>
+          {workflowId && (
+            <p role="status">
+              Editing saved workflow: {workflowName ?? "Untitled workflow"} (ID:{" "}
+              {workflowId})
             </p>
           )}
-        </aside>
+          <p>Connect nodes to preview your workflow structure.</p>
+          {onSaveGraph && (
+            <div className="workflow-card__actions">
+              <button
+                type="button"
+                className="workflow-card__run"
+                onClick={() =>
+                  void onSaveGraph(graphPayload, {
+                    name: workflowName,
+                    description: workflowDescription,
+                  })
+                }
+                disabled={isSaving}
+              >
+                {isSaving ? "Saving..." : workflowId ? "Save Changes" : "Save Workflow"}
+              </button>
+              {saveError && <p role="alert">{saveError}</p>}
+              {saveMessage && <p role="status">{saveMessage}</p>}
+            </div>
+          )}
 
-        <details className="node-preview__payload">
-          <summary>Current graph payload</summary>
-          <pre>{JSON.stringify(graphPayload, null, 2)}</pre>
-        </details>
-      </div>
+          <div className="node-preview__toolbar">
+            {!hasTrigger && (
+              <button type="button" onClick={addTriggerNode}>
+                Add trigger node
+              </button>
+            )}
+            <button type="button" onClick={addTaskNode}>
+              Add task node
+            </button>
+            <button type="button" onClick={addConditionNode}>
+              Add condition node
+            </button>
+            <button
+              type="button"
+              onClick={removeSelectedEdge}
+              disabled={!selectedEdge}
+            >
+              Remove selected edge
+            </button>
+            <span className="node-preview__hint">
+              {selectedEdge
+                ? `Selected edge: ${selectedEdge.id}`
+                : "Select an edge to remove it."}
+            </span>
+          </div>
+
+          {validationIssues.length > 0 && (
+            <div className="node-preview__errors" role="alert">
+              <p className="node-preview__errors-title">
+                This graph does not satisfy the workflow contract yet:
+              </p>
+              <ul>
+                {validationIssues.map((issue) => (
+                  <li key={issue.message} className="node-preview__error-item">
+                    <span>{issue.message}</span>
+                    {issue.nodeId && (
+                      <button
+                        type="button"
+                        className="node-preview__error-focus"
+                        onClick={() => setSelectedNodeId(issue.nodeId!)}
+                      >
+                        Focus node
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="node-preview__workspace">
+            <div className="node-preview__canvas">
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+                onEdgeClick={(_, edge) => setSelectedEdgeId(edge.id)}
+                onPaneClick={() => setSelectedEdgeId(null)}
+                deleteKeyCode={["Backspace", "Delete"]}
+                fitView
+              >
+                <Background />
+                <Controls />
+                <MiniMap />
+              </ReactFlow>
+            </div>
+
+            <aside className="node-preview__details" aria-live="polite">
+              <p className="node-preview__eyebrow">Selected node</p>
+
+              {selectedNode ? (
+                <>
+                  <h3>{selectedNode.data.label}</h3>
+
+                  <dl>
+                    <div>
+                      <dt>Type</dt>
+                      <dd>{NODE_KIND_LABEL[selectedNode.data.type]}</dd>
+                    </div>
+                    <div>
+                      <dt>Node ID</dt>
+                      <dd>{selectedNode.id}</dd>
+                    </div>
+                    <div>
+                      <dt>Position</dt>
+                      <dd>
+                        x {Math.round(selectedNode.position.x)}, y{" "}
+                        {Math.round(selectedNode.position.y)}
+                      </dd>
+                    </div>
+                    {selectedNode.data.type === "condition" && (
+                      <div>
+                        <dt>Condition</dt>
+                        <dd>{describeCondition(selectedNode.data.config)}</dd>
+                      </div>
+                    )}
+                  </dl>
+
+                  <NodeLabelEditor
+                    key={`label-${selectedNode.id}`}
+                    node={selectedNode}
+                    onApply={applyLabel}
+                  />
+
+                  {selectedNode.data.type === "condition" && (
+                    <ConditionConfigEditor
+                      key={`config-${selectedNode.id}`}
+                      node={selectedNode}
+                      onApply={applyConditionConfig}
+                    />
+                  )}
+                </>
+              ) : (
+                <p className="node-preview__note">
+                  Select a node on the canvas to edit its label and configuration.
+                </p>
+              )}
+            </aside>
+
+            <details className="node-preview__payload">
+              <summary>Current graph payload</summary>
+              <pre>{JSON.stringify(graphPayload, null, 2)}</pre>
+            </details>
+          </div>
+        </>
+      )}
     </section>
   );
 }
