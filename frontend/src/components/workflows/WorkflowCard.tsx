@@ -64,40 +64,42 @@ function WorkflowCard({
         </div>
       </div>
 
-      {(onRun || onEdit) && (
+      {(onEdit || onRun || onDelete) && (
         <div className="workflow-card__actions">
           {onEdit && (
             <button
               type="button"
-              className="workflow-card__run"
+              className="workflow-card__btn workflow-card__edit"
               onClick={onEdit}
+              aria-label={`Edit workflow: ${name}`}
             >
               Edit workflow
             </button>
           )}
-          <button
-            type="button"
-            className="workflow-card__run"
-            onClick={onRun}
-            disabled={isRunButtonDisabled(canRun, isRunning)}
-            aria-label={`Run workflow: ${name}`}
-          >
-            {isRunning ? "Running..." : "Run workflow"}
-          </button>
-        </div>
-      )}
 
-      {onDelete && (
-        <div className="workflow-card__actions">
-          <button
-            type="button"
-            className="workflow-card__delete"
-            onClick={onDelete}
-            disabled={isDeleting}
-            aria-label={`Delete workflow: ${name}`}
-          >
-            {isDeleting ? "Deleting..." : "Delete workflow"}
-          </button>
+          {onRun && (
+            <button
+              type="button"
+              className="workflow-card__btn workflow-card__run"
+              onClick={onRun}
+              disabled={isRunButtonDisabled(canRun, isRunning)}
+              aria-label={`Run workflow: ${name}`}
+            >
+              {isRunning ? "Running..." : "Run workflow"}
+            </button>
+          )}
+
+          {onDelete && (
+            <button
+              type="button"
+              className="workflow-card__btn workflow-card__delete"
+              onClick={onDelete}
+              disabled={isDeleting}
+              aria-label={`Delete workflow: ${name}`}
+            >
+              {isDeleting ? "Deleting..." : "Delete workflow"}
+            </button>
+          )}
         </div>
       )}
     </article>

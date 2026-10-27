@@ -58,21 +58,33 @@ function hasCycle(nodeIds: string[], edges: LooseEdge[]): boolean {
   return visited !== nodeIds.length;
 }
 
-export function validateWorkflowGraph(input: unknown): string[] {
-  const errors: string[] = [];
+export interface GraphValidationError {
+  message: string;
+  nodeId?: string;
+  edgeId?: string;
+}
 
-  if (!isObject(input)) return ["graph must be an object"];
+export function validateWorkflowGraphDetailed(
+  input: unknown,
+): GraphValidationError[] {
+  const issues: GraphValidationError[] = [];
+
+  if (!isObject(input)) {
+    return [{ message: "graph must be an object" }];
+  }
 
   if (input.version !== 1) {
-    errors.push(`version must be 1 (got ${String(input.version)})`);
+    issues.push({
+      message: `version must be 1 (got ${String(input.version)})`,
+    });
   }
 
   const rawNodes = asArray(input.nodes);
   const rawEdges = asArray(input.edges);
 
-  if (!rawNodes) errors.push("nodes must be an array");
-  if (!rawEdges) errors.push("edges must be an array");
-  if (!rawNodes || !rawEdges) return errors;
+  if (!rawNodes) issues.push({ message: "nodes must be an array" });
+  if (!rawEdges) issues.push({ message: "edges must be an array" });
+  if (!rawNodes || !rawEdges) return issues;
 
   const nodes: LooseNode[] = [];
   const nodeIds = new Set<string>();
@@ -80,31 +92,45 @@ export function validateWorkflowGraph(input: unknown): string[] {
 
   for (const value of rawNodes) {
     if (!isObject(value)) {
-      errors.push("every node must be an object");
+      issues.push({ message: "every node must be an object" });
       continue;
     }
 
     nodes.push(value);
 
     const id = value.id;
+    const stringId = typeof id === "string" ? id : undefined;
+
     if (typeof id !== "string" || id.trim() === "") {
-      errors.push("every node needs a non-empty string id");
+      issues.push({ message: "every node needs a non-empty string id" });
     } else if (nodeIds.has(id)) {
-      errors.push(`duplicate node id "${id}"`);
+      issues.push({
+        message: `duplicate node id "${id}"`,
+        nodeId: id,
+      });
     } else {
       nodeIds.add(id);
       if (typeof value.type === "string") nodeTypeById.set(id, value.type);
     }
 
     if (typeof value.type !== "string" || !NODE_TYPES.includes(value.type)) {
-      errors.push(`node "${String(id)}" must have type trigger, task or condition`);
+      issues.push({
+        message: `node "${String(id)}" must have type trigger, task or condition`,
+        nodeId: stringId,
+      });
     }
 
     const data = value.data;
     if (!isObject(data)) {
-      errors.push(`node "${String(id)}" must have a data object`);
+      issues.push({
+        message: `node "${String(id)}" must have a data object`,
+        nodeId: stringId,
+      });
     } else if (data.type !== value.type) {
-      errors.push(`node "${String(id)}" must have data.type equal to its type`);
+      issues.push({
+        message: `node "${String(id)}" must have data.type equal to its type`,
+        nodeId: stringId,
+      });
     }
 
     const position = value.position;
@@ -113,17 +139,18 @@ export function validateWorkflowGraph(input: unknown): string[] {
       !isFiniteNumber(position.x) ||
       !isFiniteNumber(position.y)
     ) {
-      errors.push(
-        `node "${String(id)}" must have finite position.x and position.y`,
-      );
+      issues.push({
+        message: `node "${String(id)}" must have finite position.x and position.y`,
+        nodeId: stringId,
+      });
     }
   }
 
   const triggerCount = nodes.filter((node) => node.type === "trigger").length;
   if (triggerCount !== 1) {
-    errors.push(
-      `graph must contain exactly one trigger node (found ${triggerCount})`,
-    );
+    issues.push({
+      message: `graph must contain exactly one trigger node (found ${triggerCount})`,
+    });
   }
 
   const edges: LooseEdge[] = [];
@@ -131,17 +158,22 @@ export function validateWorkflowGraph(input: unknown): string[] {
 
   for (const value of rawEdges) {
     if (!isObject(value)) {
-      errors.push("every edge must be an object");
+      issues.push({ message: "every edge must be an object" });
       continue;
     }
 
     edges.push(value);
 
     const id = value.id;
+    const stringEdgeId = typeof id === "string" ? id : undefined;
+
     if (typeof id !== "string" || id.trim() === "") {
-      errors.push("every edge needs a non-empty string id");
+      issues.push({ message: "every edge needs a non-empty string id" });
     } else if (edgeIds.has(id)) {
-      errors.push(`duplicate edge id "${id}"`);
+      issues.push({
+        message: `duplicate edge id "${id}"`,
+        edgeId: id,
+      });
     } else {
       edgeIds.add(id);
     }
@@ -150,23 +182,31 @@ export function validateWorkflowGraph(input: unknown): string[] {
     const target = value.target;
 
     if (typeof source !== "string" || !nodeIds.has(source)) {
-      errors.push(`edge "${String(id)}" references a missing source node`);
+      issues.push({
+        message: `edge "${String(id)}" references a missing source node`,
+        edgeId: stringEdgeId,
+      });
     }
     if (typeof target !== "string" || !nodeIds.has(target)) {
-      errors.push(`edge "${String(id)}" references a missing target node`);
+      issues.push({
+        message: `edge "${String(id)}" references a missing target node`,
+        edgeId: stringEdgeId,
+      });
     }
 
     if (typeof source === "string" && nodeTypeById.get(source) === "condition") {
       const handle = value.sourceHandle;
       if (handle !== "true" && handle !== "false") {
-        errors.push(
-          `edge "${String(id)}" leaving condition "${source}" must have sourceHandle "true" or "false"`,
-        );
+        issues.push({
+          message: `edge "${String(id)}" leaving condition "${source}" must have sourceHandle "true" or "false"`,
+          nodeId: source,
+          edgeId: stringEdgeId,
+        });
       }
     }
   }
 
-  // Rule 8 — every condition must expose both branches.
+  // Rule 8 — every condition must expose both branches (and at most one of each).
   for (const node of nodes) {
     if (node.type !== "condition" || typeof node.id !== "string") continue;
 
@@ -174,20 +214,46 @@ export function validateWorkflowGraph(input: unknown): string[] {
       .filter((edge) => edge.source === node.id)
       .map((edge) => edge.sourceHandle);
 
-    if (!handles.includes("true")) {
-      errors.push(`Condition node "${node.id}" is missing its true branch`);
+    const trueCount = handles.filter((h) => h === "true").length;
+    const falseCount = handles.filter((h) => h === "false").length;
+
+    if (trueCount === 0) {
+      issues.push({
+        message: `Condition node "${node.id}" is missing its true branch`,
+        nodeId: node.id,
+      });
+    } else if (trueCount > 1) {
+      issues.push({
+        message: `Condition node "${node.id}" has multiple true branches`,
+        nodeId: node.id,
+      });
     }
-    if (!handles.includes("false")) {
-      errors.push(`Condition node "${node.id}" is missing its false branch`);
+
+    if (falseCount === 0) {
+      issues.push({
+        message: `Condition node "${node.id}" is missing its false branch`,
+        nodeId: node.id,
+      });
+    } else if (falseCount > 1) {
+      issues.push({
+        message: `Condition node "${node.id}" has multiple false branches`,
+        nodeId: node.id,
+      });
     }
   }
 
   // Rule 9 — the graph must be a DAG.
-  if (errors.length === 0 && nodeIds.size > 0) {
+  if (issues.length === 0 && nodeIds.size > 0) {
     if (hasCycle([...nodeIds], edges)) {
-      errors.push("graph must be acyclic (a cycle was detected)");
+      issues.push({
+        message: "graph must be acyclic (a cycle was detected)",
+      });
     }
   }
 
-  return errors;
+  return issues;
+}
+
+export function validateWorkflowGraph(input: unknown): string[] {
+  return validateWorkflowGraphDetailed(input).map((issue) => issue.message);
 }
