@@ -513,7 +513,31 @@ function WorkflowsPage({
           ? `Workflow graph available (${graph.nodes.length} nodes, ${graph.edges.length} edges).`
           : "Open Node Preview to prepare a workflow graph."}
       </p>
+      {executionMessage && (
+        <p role="status" className="workflows-page__note">
+          {executionMessage}
+        </p>
+      )}
 
+      {executionError && (
+        <p role="alert" className="workflows-page__error">
+          {executionError}
+        </p>
+      )}
+
+      {lastExecution && (
+        <p className="workflows-page__note">
+          Execution status: <strong>{lastExecution.status}</strong>
+          {" · "}
+          Nodes recorded: {lastExecution.nodeResults?.length ?? 0}
+        </p>
+      )}
+
+      {deleteError && (
+        <p className="workflows-page__error" role="alert">
+          {deleteError}
+        </p>
+      )}
       <div className="workflows-page__filters">
         <div className="workflows-page__search-field">
           <label htmlFor="workflow-search">Search workflows</label>
@@ -525,6 +549,32 @@ function WorkflowsPage({
             onChange={(event) => setSearch(event.target.value)}
           />
         </div>
+
+        {/* Execution feedback — insert here */}
+        {executionMessage && (
+          <p role="status" className="workflows-page__note">
+            {executionMessage}
+          </p>
+        )}
+
+        {executionError && (
+          <p role="alert" className="workflows-page__error">
+            {executionError}
+          </p>
+        )}
+
+        {lastExecution && (
+          <p className="workflows-page__note">
+            Execution status: <strong>{lastExecution.status}</strong>
+            {" · "}
+            Nodes recorded: {lastExecution.nodeResults?.length ?? 0}
+          </p>
+        )}
+        {deleteError && (
+          <p className="workflows-page__error" role="alert">
+            {deleteError}
+          </p>
+        )}
 
         <div className="workflows-page__status-field">
           <label htmlFor="workflow-status">Filter by status</label>
