@@ -520,7 +520,31 @@ function WorkflowsPage({
           ? `Workflow graph available (${graph.nodes.length} nodes, ${graph.edges.length} edges).`
           : "Open Node Preview to prepare a workflow graph."}
       </p>
+      {executionMessage && (
+        <p role="status" className="workflows-page__note">
+          {executionMessage}
+        </p>
+      )}
 
+      {executionError && (
+        <p role="alert" className="workflows-page__error">
+          {executionError}
+        </p>
+      )}
+
+      {lastExecution && (
+        <p className="workflows-page__note">
+          Execution status: <strong>{lastExecution.status}</strong>
+          {" · "}
+          Nodes recorded: {lastExecution.nodeResults?.length ?? 0}
+        </p>
+      )}
+
+      {deleteError && (
+        <p className="workflows-page__error" role="alert">
+          {deleteError}
+        </p>
+      )}
       <div className="workflows-page__filters">
         <div className="workflows-page__search-field">
           <label htmlFor="workflow-search">Search workflows</label>
@@ -531,10 +555,6 @@ function WorkflowsPage({
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-        </div>
-
-        <div className="workflows-page__filters">
-          {/* Keep your existing search and status-filter code here */}
         </div>
 
         {/* Execution feedback — insert here */}
@@ -557,11 +577,6 @@ function WorkflowsPage({
             Nodes recorded: {lastExecution.nodeResults?.length ?? 0}
           </p>
         )}
-
-        <div className="workflows-page__results-heading">
-          <h2>All workflows</h2>
-          <span>{filteredWorkflows.length} shown</span>
-        </div>
         {deleteError && (
           <p className="workflows-page__error" role="alert">
             {deleteError}
