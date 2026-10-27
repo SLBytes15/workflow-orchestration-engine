@@ -25,45 +25,8 @@ Requirements analysis and project setup. Implementation details are pending conf
 
 ## Workflow Execution
 
-The backend defines tenant-authenticated endpoints for requesting workflow executions and retrieving execution history and execution details. Execution requests are currently unavailable because no execution worker is configured. Browser end-to-end verification is pending.
+The backend exposes tenant-authenticated endpoints for starting workflow executions and retrieving execution history and details. The POST handler calls the execution service directly; the service creates a queued record, transitions it to running, invokes `executeWorkflowGraph()` in the request path, and persists the terminal result. Workflow lookup, execution updates, history, and detail queries are scoped by tenant ID. The service persists compensation checkpoints supplied by the runtime and surfaces errors when checkpoint or terminal-result persistence cannot be confirmed. This does not establish that compensation handlers always succeed or that the system is production-ready or worker-based.
 
-## Backend Test-Tenant Provisioning
+Previously recorded manual verification (not rerun for this documentation update) includes a basic trigger-to-unconfigured-task workflow completing, its execution remaining readable after a backend process restart, and tested temporary-tenant requests being unable to retrieve another tenant's execution. These observations are historical and do not establish comprehensive tenant isolation.
 
-To create or safely re-check the two isolated tenants for authorized workflow
-verification, configure `MONGODB_URI` in `backend/.env` or the process
-environment. It must point to the isolated MongoDB database named exactly
-`test`; do not use a production connection. Run from the `backend/` directory:
-
-```sh
-NODE_ENV=test ALLOW_TEST_TENANT_SEED=true npm run seed:mahak-test-tenants
-```
-
-Both `NODE_ENV=test` and the explicit `ALLOW_TEST_TENANT_SEED=true` opt-in are
-required. The script also checks the actual connected MongoDB database name
-before writing. The provisioning service is invoked only by this dedicated
-`seed:mahak-test-tenants` script; the normal test and application commands do
-not provision tenants. Never run this provisioning command against a
-development or production database. To run the fake-backed unit tests without
-connecting to MongoDB, run this from `backend/`:
-
-```sh
-npx tsx --test src/services/testTenantProvisioning.service.test.ts
-```
-
-The complete backend suite is `npm test`.
-
-The script creates `Mahak Test Tenant A` and `Mahak Test Tenant B` with
-independent API keys, verifies that each newly created key resolves to its own
-tenant, and stores only the API-key hashes. Existing active keys are not
-rotated, revoked, or displayed; rerunning the command does not issue extra keys.
-Plaintext keys are shown only during the run that creates them and cannot be
-recovered by rerunning the script.
-
-Run the command in a private terminal and do not save its output in the
-repository, shell history, logs, screenshots, or chat. Copy each newly displayed
-key directly into the team's approved secret-sharing mechanism and share it
-only with the authorized developer, paired with its tenant name and ID. Do not
-send keys through ordinary email or chat, and do not add them to source,
-documentation, fixtures, or Git commits. If a key is lost, have an authorized
-operator revoke it and arrange a controlled replacement rather than attempting
-to recover it from the database.
+Browser end-to-end execution and external task integrations remain unverified. MongoDB Change Streams and event-triggered workflow execution are Week 2 requirements, but remain pending/unverified here: the inspected implementation does not establish an event source, tenant-ownership contract, payload schema, or delivery guarantees.
