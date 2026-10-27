@@ -541,4 +541,83 @@ it("fails when numeric comparison operands are invalid", async () => {
     });
     assert.equal(JSON.stringify(result).includes("private handler detail"), false);
   });
+
+  it("fails with ACTION_TIMEOUT when a handler exceeds its configured timeout", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "GET",
+      url: "https://example.test",
+      timeoutMs: 25,
+    };
+
+    const startedAt = Date.now();
+    const result = await executeWorkflowGraph(graph, { approved: true }, {
+      taskActions: {
+        http: {
+          // Never settles. Only the configured timeout can end the wait.
+          execute: () => new Promise<never>(() => {}),
+        },
+      },
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(result.status, "failed");
+    assert.deepEqual(result.error, {
+      code: "ACTION_TIMEOUT",
+      message: "The task action exceeded its configured timeout.",
+    });
+
+    const timedOutNode = result.nodeResults.find(
+      (node) => node.nodeId === "task-true",
+    );
+    assert.equal(timedOutNode?.status, "failed");
+    assert.equal(timedOutNode?.error?.code, "ACTION_TIMEOUT");
+    // Guards against the timeout being ignored and the run hanging.
+    assert.ok(elapsedMs < 2000, `timeout took ${elapsedMs}ms to fire`);
+  });
+
+  it("rejects non-positive timeouts before dispatching the action", async () => {
+    for (const timeoutMs of [0, -1, -250]) {
+      const graph = createGraph();
+      const task = graph.nodes.find((node) => node.id === "task-true");
+      assert.ok(task);
+      task.data.config = {
+        action: "http",
+        method: "GET",
+        url: "https://example.test",
+        timeoutMs,
+      };
+      let called = false;
+
+      const result = await executeWorkflowGraph(graph, { approved: true }, {
+        taskActions: {
+          http: {
+            execute: async () => {
+              called = true;
+              return { ok: true };
+            },
+          },
+        },
+      });
+
+      assert.equal(
+        result.status,
+        "failed",
+        `timeoutMs=${String(timeoutMs)} must fail validation`,
+      );
+      assert.equal(
+        result.error?.code,
+        "INVALID_ACTION_CONFIG",
+        `timeoutMs=${String(timeoutMs)} must be rejected`,
+      );
+      assert.equal(
+        called,
+        false,
+        `timeoutMs=${String(timeoutMs)} must not dispatch the handler`,
+      );
+    }
+  });
 });
