@@ -42,17 +42,27 @@ function NodeShell({ kind, label, selected = false }: NodeShellProps) {
             the agreed contract. Both are required and must be preserved
             as `edge.sourceHandle` on outgoing edges.
           */}
+          <div className="workflow-node__branches" aria-hidden="true">
+            <span className="workflow-node__branch-label workflow-node__branch-label--true">
+              True (Yes)
+            </span>
+            <span className="workflow-node__branch-label workflow-node__branch-label--false">
+              False (No)
+            </span>
+          </div>
           <Handle
             type="source"
             position={Position.Bottom}
             id={HANDLE.branchTrue}
             className="workflow-node__handle workflow-node__handle--true"
+            aria-label="True (Yes) branch"
           />
           <Handle
             type="source"
             position={Position.Bottom}
             id={HANDLE.branchFalse}
             className="workflow-node__handle workflow-node__handle--false"
+            aria-label="False (No) branch"
           />
         </>
       ) : (
@@ -61,6 +71,7 @@ function NodeShell({ kind, label, selected = false }: NodeShellProps) {
           position={Position.Bottom}
           id={HANDLE.source}
           className="workflow-node__handle"
+          aria-label="Next step"
         />
       )}
     </div>

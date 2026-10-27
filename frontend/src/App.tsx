@@ -1,13 +1,22 @@
 
 import { useState } from 'react'
+import DashboardPage from './pages/DashboardPage'
 import WorkflowsPage from './pages/WorkflowsPage'
 import ExecutionsPage from './pages/ExecutionsPage'
+import SettingsPage from './pages/SettingsPage'
 import Sidebar from './components/layout/Sidebar'
 import NodePreview from './components/workflow/nodes/NodePreview'
 import {
+  createWorkflow,
   updateWorkflow,
   type WorkflowGraph,
 } from './api/workflowApi'
+import {
+  appendWorkflow,
+  initialWorkflows,
+  mapPersistedWorkflow,
+  type Workflow,
+} from './workflowState'
 import { validateWorkflowGraph } from './graphValidation'
 import './App.css'
 
@@ -20,6 +29,8 @@ type Page =
 
 function App() {
   const [activePage, setActivePage] = useState<Page>('Dashboard')
+  const [workflows, setWorkflows] = useState<Workflow[]>(initialWorkflows)
+  const [createWorkflowRequested, setCreateWorkflowRequested] = useState(false)
   const [workflowGraph, setWorkflowGraph] =
     useState<WorkflowGraph | null>(null)
   const [workflowId, setWorkflowId] = useState<string | null>(null)
@@ -42,12 +53,10 @@ function App() {
     setActivePage('Node Preview')
   }
 
-  const handleSaveGraph = async (graph: WorkflowGraph) => {
-    if (!workflowId) {
-      setSaveError('No saved workflow selected.')
-      return
-    }
-
+  const handleSaveGraph = async (
+    graph: WorkflowGraph,
+    metadata?: { name?: string; description?: string },
+  ) => {
     if (!tenantApiKey?.trim()) {
       setSaveError('API authentication is not configured.')
       return
@@ -58,24 +67,86 @@ function App() {
     setSaveMessage('')
 
     try {
-      await updateWorkflow(
-        workflowId,
-        { graph },
-        tenantApiKey,
-      )
+      if (workflowId) {
+        await updateWorkflow(
+          workflowId,
+          {
+            graph,
+            ...(metadata?.name?.trim() ? { name: metadata.name.trim() } : {}),
+            ...(metadata?.description !== undefined
+              ? { description: metadata.description.trim() }
+              : {}),
+          },
+          tenantApiKey,
+        )
 
-      setWorkflowGraph(graph)
-      setSaveMessage('Workflow changes saved successfully.')
+        setWorkflowGraph(graph)
+        setWorkflows((current) =>
+          current.map((wf) =>
+            String(wf.id) === String(workflowId)
+              ? {
+                  ...wf,
+                  graph,
+                  name: metadata?.name?.trim() || wf.name,
+                  description:
+                    metadata?.description !== undefined
+                      ? metadata.description.trim()
+                      : wf.description,
+                  updatedAt: new Date().toISOString().slice(0, 10),
+                }
+              : wf,
+          ),
+        )
+        setSaveMessage('Workflow changes saved successfully.')
+      } else {
+        const trimmedName = metadata?.name?.trim() || 'Untitled Workflow'
+        const trimmedDescription = metadata?.description?.trim()
+
+        const result = await createWorkflow(
+          {
+            name: trimmedName,
+            ...(trimmedDescription ? { description: trimmedDescription } : {}),
+            graph,
+          },
+          tenantApiKey,
+        )
+
+        const savedWorkflow = result?.workflow
+        if (!savedWorkflow) {
+          throw new Error('The backend response did not contain a saved workflow.')
+        }
+
+        const newWorkflow = mapPersistedWorkflow(savedWorkflow, {
+          name: trimmedName,
+          description: trimmedDescription || 'No description provided.',
+        })
+
+        const createdId = String(newWorkflow.id)
+        setWorkflowId(createdId)
+        setWorkflowGraph(graph)
+        setWorkflows((current) => appendWorkflow(current, newWorkflow))
+        setSaveMessage('Workflow created and saved successfully.')
+      }
     } catch (error) {
-      setSaveError(
+      const rawMessage =
         error instanceof Error
           ? error.message
-          : 'Unable to save workflow changes.',
-      )
+          : 'Unable to save workflow changes.'
+      const userMessage =
+        rawMessage.includes('Failed to fetch') ||
+        rawMessage.includes('NetworkError') ||
+        rawMessage.includes('fetch failed')
+          ? 'Unable to reach the workflow backend server. Please verify the backend service is running.'
+          : rawMessage
+      setSaveError(userMessage)
     } finally {
       setIsSaving(false)
     }
   }
+
+  const currentWorkflow = workflowId
+    ? workflows.find((w) => String(w.id) === String(workflowId))
+    : null
 
   const graphIssues = workflowGraph
     ? validateWorkflowGraph(workflowGraph)
@@ -100,15 +171,16 @@ function App() {
 
       <main className="app">
         {activePage === 'Dashboard' && (
-          <>
-            <h1>Dashboard</h1>
-            <p>Welcome to the Workflow App.</p>
-            <WorkflowsPage
-              graph={workflowGraph}
-              tenantApiKey={tenantApiKey}
-              onEditWorkflow={handleEditWorkflow}
-            />
-          </>
+          <DashboardPage
+            workflows={workflows}
+            tenantApiKey={tenantApiKey}
+            onNavigate={(page) => setActivePage(page as Page)}
+            onCreateWorkflow={() => {
+              setCreateWorkflowRequested(true)
+              setActivePage('Workflows')
+            }}
+            onEditWorkflow={handleEditWorkflow}
+          />
         )}
 
         {activePage === 'Workflows' && (
@@ -116,6 +188,10 @@ function App() {
             graph={workflowGraph}
             tenantApiKey={tenantApiKey}
             onEditWorkflow={handleEditWorkflow}
+            workflows={workflows}
+            onWorkflowsChange={setWorkflows}
+            initialCreateOpen={createWorkflowRequested}
+            onClearInitialCreateOpen={() => setCreateWorkflowRequested(false)}
           />
         )}
 
@@ -131,6 +207,8 @@ function App() {
 
             <NodePreview
               workflowId={workflowId ?? undefined}
+              workflowName={currentWorkflow?.name}
+              workflowDescription={currentWorkflow?.description}
               initialGraph={workflowGraph}
               onGraphChange={setWorkflowGraph}
               onSaveGraph={handleSaveGraph}
@@ -146,23 +224,7 @@ function App() {
         )}
 
         {activePage === 'Settings' && (
-          <section>
-            <h1>Settings</h1>
-            <p>Manage your workflow application preferences.</p>
-
-            <div className="workflow-card">
-              <h3>General Settings</h3>
-              <p>Application: Workflow App</p>
-              <p>Environment: Development</p>
-            </div>
-
-            <div className="workflow-card">
-              <h3>Notifications</h3>
-              <p>
-                Notification preferences are not available yet.
-              </p>
-            </div>
-          </section>
+          <SettingsPage tenantApiKey={tenantApiKey} />
         )}
       </main>
     </div>

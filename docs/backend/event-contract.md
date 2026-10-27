@@ -127,11 +127,47 @@ Dispatch failures for a single workflow or invalid event are caught and logged w
 
 ---
 
-## 7. MVP Limitations & Operational Guarantees
+## 7. Process Restart, Resume Tokens & Failure Handling
 
+### 7.1 Resume Token Persistence (Verified in Code)
+- **Current Behavior:** The Change Stream watcher factory initializes `BusinessEventModel.watch([{ $match: { operationType: "insert" } }], { fullDocument: "updateLookup" })` with no `resumeAfter`, `startAfter`, or `startAtOperationTime` parameters.
+- **State Storage:** Resume tokens (MongoDB `_id` change stream tokens) are **not persisted** to disk, MongoDB, or any external cache.
+- **Implementation Status:** Unimplemented in the current MVP.
+
+### 7.2 Process Restart & Offline Event Handling (Verified in Code)
+- **Restart Semantics:** A new Change Stream is opened when the watcher starts. Because no resume token is persisted or supplied, the application does not implement historical event backfill or restart recovery.
+- **Downtime Events:** Business events inserted into `business_events` while the engine is offline, restarting, or disconnected are not backfilled or replayed retrospectively upon restart.
+- **Queue Durability:** The in-memory processing queue (`processingQueue`) is not durable; queued work may be lost if the process terminates unexpectedly (e.g. `SIGKILL`, crash, or power loss).
+
+### 7.3 Stream Error and Close Behavior (Verified in Code)
+- **Error Listener:** `stream.on("error", (error) => { logger.error(...) })` logs the error message to the console.
+- **Close Listener:** `stream.on("close", () => { logger.info("Change stream closed") })` logs the stream closure.
+- **No Automatic Reconnection:** The watcher does not implement automatic reconnection or an automated retry supervisor. If the stream encounters a fatal error or closes unexpectedly:
+  - The error is logged to prevent an unhandled crash.
+  - The stream remains closed.
+  - Subsequent insert events will not be detected until the backend application is restarted.
+
+### 7.4 Reconnection, Retries & Dispatch Failures (Verified in Code)
+- **Reconnection:** Not implemented.
+- **Dispatch Failures & Retries:** If workflow dispatch (`dependencies.startExecution`) throws an error during event handling, the watcher catches and logs the failure without terminating the watcher. The watcher does not retry dispatch, re-queue the event, or forward it to a dead-letter queue.
+- **Deduplication:** There is no event-level deduplication mechanism in the watcher. A single business event legitimately dispatches to each active workflow whose trigger configuration matches. Duplicate event documents in the database may result in duplicate workflow executions.
+- **Historical Replay:** Not implemented. There is no API or background job to rewind or replay historical `business_events` documents.
+
+---
+
+## 8. MVP Limitations & Mid-Review Demonstration Guidelines
+
+### 8.1 Practical Limitations
 - **Insert Operations Only:** Deletes, updates, and replacements do not trigger workflows.
-- **No Exactly-Once Delivery Guarantee:** At-most-once or at-least-once depends on connection stability; network partitions or server crashes may cause missed events or duplicate executions. Exactly-once is not guaranteed in this MVP.
-- **No Resume Token Persistence:** In this MVP slice, resume tokens are not persisted across process restarts. If the process is stopped or restarts, events inserted during downtime are not automatically replayed.
-- **No Dead-Letter Queue (DLQ):** Failed workflow executions record failure in `WorkflowExecution` records but are not retried or forwarded to a dead-letter queue.
-- **MongoDB Replica Set Prerequisite:** Real MongoDB Change Streams require a replica set or sharded cluster; local testing without an active replica set is performed using the verified fake-based dependency-injected test suite.
+- **Delivery Guarantee:** Best-effort event dispatch with no formal delivery, deduplication, or exactly-once guarantees:
+  - Events inserted while the watcher is offline or disconnected are not backfilled.
+  - Exactly-once execution is not guaranteed.
+  - A single event matching multiple active workflows triggers separate executions for each workflow.
+  - Duplicate event documents in `business_events` will trigger separate executions.
+- **Dead-Letter Queue & Retries:** Automated retries and dead-letter queues are not implemented in this MVP.
+- **MongoDB Replica Set Prerequisite:** Native MongoDB Change Streams require a replica set or sharded cluster; running against a standalone mongod instance throws `ChangeStream is only supported on replica sets`.
 
+### 8.2 Demonstration Guidelines for Mid-Review
+1. **Startup Order in Demos:** The backend server (`npm run dev` or `npm start`) must be fully initialized and show `[STARTUP] Change stream watcher started successfully` **before** any test business events are inserted into the database. Events inserted prior to watcher startup will be missed.
+2. **Environment Selection:** For live demonstrations, MongoDB must run with a replica set configured (e.g. local single-node replica set `mongod --replSet rs0` or Atlas cluster). If demonstrating in an offline or single-node standalone environment, demonstrate using the verified in-memory fake test suite (`changeStreamWatcher.service.test.ts`), which validates all dispatch logic without replica set requirements.
+3. **Handling Connection Drops:** If the database connection drops or MongoDB restarts during a demonstration, restart the backend Node.js process to establish a fresh Change Stream watcher.

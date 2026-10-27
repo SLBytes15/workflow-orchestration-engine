@@ -93,7 +93,9 @@ export type CreateWorkflowResponse = {
 }
 
 export type UpdateWorkflowRequest = {
-  graph: WorkflowGraph
+  name?: string
+  description?: string
+  graph?: WorkflowGraph
 }
 
 export type ListWorkflowsResponse = {

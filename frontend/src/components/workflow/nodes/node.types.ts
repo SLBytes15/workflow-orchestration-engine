@@ -169,9 +169,42 @@ export function createConditionConfig(): ConditionConfig {
   };
 }
 
+export function createTriggerNode(
+  id: string,
+  position: { x: number; y: number },
+  label = "Trigger",
+): WorkflowFlowNode {
+  return {
+    id,
+    type: "trigger",
+    position,
+    data: {
+      type: "trigger",
+      label,
+    },
+  };
+}
+
+export function createTaskNode(
+  id: string,
+  position: { x: number; y: number },
+  label = "Task",
+): WorkflowFlowNode {
+  return {
+    id,
+    type: "task",
+    position,
+    data: {
+      type: "task",
+      label,
+    },
+  };
+}
+
 export function createConditionNode(
   id: string,
   position: { x: number; y: number },
+  label = "Condition",
 ): WorkflowFlowNode {
   return {
     id,
@@ -179,7 +212,7 @@ export function createConditionNode(
     position,
     data: {
       type: "condition",
-      label: "Condition",
+      label,
       config: createConditionConfig(),
     },
   };
