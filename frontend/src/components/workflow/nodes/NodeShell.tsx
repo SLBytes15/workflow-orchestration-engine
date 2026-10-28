@@ -32,7 +32,12 @@ function NodeShell({ kind, label, selected = false }: NodeShellProps) {
         />
       )}
 
-      <span className="workflow-node__kind">{NODE_KIND_LABEL[kind]}</span>
+      <div className="workflow-node__header">
+        <span className="workflow-node__icon" aria-hidden="true">
+          {kind === "trigger" ? "↗" : kind === "task" ? "✓" : "◇"}
+        </span>
+        <span className="workflow-node__kind">{NODE_KIND_LABEL[kind]}</span>
+      </div>
       <p className="workflow-node__label">{label}</p>
 
       {kind === "condition" ? (
