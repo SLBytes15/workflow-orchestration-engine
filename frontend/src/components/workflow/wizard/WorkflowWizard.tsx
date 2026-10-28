@@ -1,5 +1,6 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import type { WorkflowGraph } from "../../../api/workflowApi";
+import type { WorkflowStatus } from "../../../workflowState";
 import {
   buildCanonicalGraphFromWizard,
   parseGraphToWizardState,
@@ -17,6 +18,7 @@ interface WorkflowWizardProps {
   workflowId?: string;
   workflowName?: string;
   workflowDescription?: string;
+  workflowStatus?: WorkflowStatus;
   onGraphChange?: (graph: WorkflowGraph) => void;
   onSaveGraph?: (
     graph: WorkflowGraph,
@@ -40,6 +42,7 @@ export function WorkflowWizard({
   workflowId,
   workflowName,
   workflowDescription,
+  workflowStatus,
   onGraphChange,
   onSaveGraph,
   isSaving = false,
@@ -54,15 +57,49 @@ export function WorkflowWizard({
 
   const currentStep = state.currentStepIndex;
 
+  const prevInitialGraphRef = useRef(initialGraph);
+  const prevWorkflowIdRef = useRef(workflowId);
+  const lastEmittedGraphRef = useRef<WorkflowGraph | null>(null);
+  const hasUserEdited = useRef(false);
+  const isFirstRender = useRef(true);
+
+  // Synchronize state when external workflow or graph changes after mount
+  useEffect(() => {
+    const isWorkflowChanged = workflowId !== prevWorkflowIdRef.current;
+    const isExternalGraphChange =
+      initialGraph !== prevInitialGraphRef.current &&
+      initialGraph !== lastEmittedGraphRef.current;
+
+    if (isWorkflowChanged || isExternalGraphChange) {
+      prevWorkflowIdRef.current = workflowId;
+      prevInitialGraphRef.current = initialGraph;
+      hasUserEdited.current = false;
+      setState(
+        parseGraphToWizardState(initialGraph, workflowName, workflowDescription),
+      );
+    } else {
+      prevWorkflowIdRef.current = workflowId;
+      prevInitialGraphRef.current = initialGraph;
+    }
+  }, [initialGraph, workflowId, workflowName, workflowDescription]);
+
   // Compute canonical graph whenever state changes
   const canonicalGraph = useMemo(() => buildCanonicalGraphFromWizard(state), [state]);
 
-  // Synchronize canonical graph with parent container
+  // Synchronize canonical graph with parent container only after user edits
   useEffect(() => {
-    onGraphChange?.(canonicalGraph);
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    if (hasUserEdited.current) {
+      lastEmittedGraphRef.current = canonicalGraph;
+      onGraphChange?.(canonicalGraph);
+    }
   }, [canonicalGraph, onGraphChange]);
 
   function handleStateChange(updates: Partial<WizardState>) {
+    hasUserEdited.current = true;
     setState((prev) => ({
       ...prev,
       ...updates,
@@ -108,9 +145,16 @@ export function WorkflowWizard({
       <div className="workflow-wizard__top-bar">
         <div>
           <span className="workflow-wizard__eyebrow">Guided Workflow Builder</span>
-          <h2 className="workflow-wizard__heading">
-            {workflowId ? `Editing: ${state.name || "Untitled"}` : "Create New Workflow"}
-          </h2>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <h2 className="workflow-wizard__heading">
+              {workflowId ? `Editing: ${state.name || "Untitled"}` : "Create New Workflow"}
+            </h2>
+            {workflowStatus && (
+              <span className={`workflow-card__badge workflow-card__badge--${workflowStatus.toLowerCase()}`}>
+                {workflowStatus}
+              </span>
+            )}
+          </div>
         </div>
 
         {onSwitchToVisual && (

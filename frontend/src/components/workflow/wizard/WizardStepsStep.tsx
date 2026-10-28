@@ -38,17 +38,43 @@ export function WizardStepsStep({
     onChange({ steps: nextSteps });
   }
 
+  function getExistingNodeIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const s of steps) {
+      ids.add(s.id);
+      if (s.type === "condition") {
+        if (s.trueTarget?.id) ids.add(s.trueTarget.id);
+        if (s.falseTarget?.id) ids.add(s.falseTarget.id);
+      }
+    }
+    return ids;
+  }
+
   function addActionStep() {
-    const nextId = `task-${steps.length + 1}`;
-    const newTask = createDefaultTask(nextId, `Action step ${steps.length + 1}`, "http");
+    const existing = getExistingNodeIds();
+    let index = steps.length + 1;
+    while (existing.has(`task-${index}`)) {
+      index++;
+    }
+    const nextId = `task-${index}`;
+    const newTask = createDefaultTask(nextId, `Action step ${index}`, "http");
     onChange({ steps: [...steps, newTask] });
   }
 
   function addDecisionStep() {
-    const nextId = `condition-${steps.length + 1}`;
-    const trueId = `task-true-${steps.length + 1}`;
-    const falseId = `task-false-${steps.length + 1}`;
-    const newCondition = createDefaultCondition(nextId, `Decision step ${steps.length + 1}`, trueId, falseId);
+    const existing = getExistingNodeIds();
+    let index = steps.length + 1;
+    while (
+      existing.has(`condition-${index}`) ||
+      existing.has(`task-true-${index}`) ||
+      existing.has(`task-false-${index}`)
+    ) {
+      index++;
+    }
+    const nextId = `condition-${index}`;
+    const trueId = `task-true-${index}`;
+    const falseId = `task-false-${index}`;
+    const newCondition = createDefaultCondition(nextId, `Decision step ${index}`, trueId, falseId);
     onChange({ steps: [...steps, newCondition] });
   }
 

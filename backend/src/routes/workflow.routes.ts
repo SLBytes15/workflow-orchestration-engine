@@ -97,6 +97,133 @@ export function createWorkflowRouter(
     }
   });
 
+  router.post("/:workflowId/pause", requireTenantAuth, async (req, res, next) => {
+    try {
+      const tenantContext = req.tenantContext;
+      if (!tenantContext) {
+        res.status(401).json({
+          error: {
+            code: "UNAUTHORIZED",
+            message: "A valid API key is required",
+          },
+        });
+        return;
+      }
+
+      const workflowId = String(req.params.workflowId);
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        res.status(400).json({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "workflowId must be a valid ID",
+          },
+        });
+        return;
+      }
+
+      const result = await service.pauseWorkflow(
+        tenantContext.tenantId,
+        workflowId,
+      );
+
+      if (result.outcome === "not_found") {
+        res.status(404).json({
+          error: {
+            code: "WORKFLOW_NOT_FOUND",
+            message: "Workflow not found",
+          },
+        });
+        return;
+      }
+
+      if (result.outcome === "invalid_status") {
+        res.status(400).json({
+          error: {
+            code: "INVALID_WORKFLOW_STATUS",
+            message: "Only active workflows can be paused",
+          },
+        });
+        return;
+      }
+
+      res.status(200).json({
+        message: "Workflow paused successfully",
+        workflow: result.workflow,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/:workflowId/resume", requireTenantAuth, async (req, res, next) => {
+    try {
+      const tenantContext = req.tenantContext;
+      if (!tenantContext) {
+        res.status(401).json({
+          error: {
+            code: "UNAUTHORIZED",
+            message: "A valid API key is required",
+          },
+        });
+        return;
+      }
+
+      const workflowId = String(req.params.workflowId);
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        res.status(400).json({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "workflowId must be a valid ID",
+          },
+        });
+        return;
+      }
+
+      const result = await service.resumeWorkflow(
+        tenantContext.tenantId,
+        workflowId,
+      );
+
+      if (result.outcome === "not_found") {
+        res.status(404).json({
+          error: {
+            code: "WORKFLOW_NOT_FOUND",
+            message: "Workflow not found",
+          },
+        });
+        return;
+      }
+
+      if (result.outcome === "invalid_status") {
+        res.status(400).json({
+          error: {
+            code: "INVALID_WORKFLOW_STATUS",
+            message: "Only paused workflows can be resumed",
+          },
+        });
+        return;
+      }
+
+      if (result.outcome === "invalid_graph") {
+        res.status(400).json({
+          error: {
+            code: "INVALID_WORKFLOW_GRAPH",
+            message: "The workflow graph is invalid and cannot be resumed",
+            details: result.errors,
+          },
+        });
+        return;
+      }
+
+      res.status(200).json({
+        message: "Workflow resumed successfully",
+        workflow: result.workflow,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.delete("/:workflowId", requireTenantAuth, async (req, res, next) => {
     try {
       const tenantContext = req.tenantContext;

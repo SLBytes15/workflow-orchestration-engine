@@ -344,6 +344,81 @@ export function buildCanonicalGraphFromWizard(state: WizardState): WorkflowGraph
 }
 
 /**
+ * Parses an existing task node's configuration into WizardTask, preserving
+ * configured actions (HTTP, email, Slack, dbQuery, transform) and fields.
+ */
+function parseTaskConfig(
+  node: { id?: string; data?: { label?: string; config?: unknown } } | undefined,
+  fallbackId: string,
+  fallbackLabel: string,
+  fallbackAction: TaskAction = "http",
+): WizardTask {
+  if (!node) {
+    return createDefaultTask(fallbackId, fallbackLabel, fallbackAction);
+  }
+
+  const id = node.id || fallbackId;
+  const label = typeof node.data?.label === "string" ? node.data.label : fallbackLabel;
+  const config =
+    node.data?.config && typeof node.data.config === "object" && !Array.isArray(node.data.config)
+      ? (node.data.config as Record<string, unknown>)
+      : undefined;
+
+  const validActions: TaskAction[] = ["http", "sendEmail", "sendSlack", "dbQuery", "transform"];
+  let action: TaskAction = fallbackAction;
+
+  if (config?.action && typeof config.action === "string" && validActions.includes(config.action as TaskAction)) {
+    action = config.action as TaskAction;
+  } else if (config) {
+    if (typeof config.to === "string" || typeof config.emailTo === "string" || typeof config.subject === "string") {
+      action = "sendEmail";
+    } else if (typeof config.channel === "string" || typeof config.slackChannel === "string") {
+      action = "sendSlack";
+    } else if (typeof config.query === "string" || typeof config.connection === "string") {
+      action = "dbQuery";
+    } else if (typeof config.expression === "string" || typeof config.transformExpression === "string") {
+      action = "transform";
+    } else if (typeof config.url === "string" || typeof config.method === "string") {
+      action = "http";
+    }
+  }
+
+  const validMethods: Array<WizardTask["httpMethod"]> = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+  const rawMethod = config?.method ?? config?.httpMethod;
+  const httpMethod: WizardTask["httpMethod"] =
+    typeof rawMethod === "string" && validMethods.includes(rawMethod as WizardTask["httpMethod"])
+      ? (rawMethod as WizardTask["httpMethod"])
+      : "POST";
+
+  const rawUrl = config?.url ?? config?.httpUrl;
+  const rawTo = config?.to ?? config?.emailTo;
+  const rawSubject = config?.subject ?? config?.emailSubject;
+  const rawBody = config?.body ?? config?.emailBody;
+  const rawChannel = config?.channel ?? config?.slackChannel;
+  const rawMessage = config?.message ?? config?.slackMessage;
+  const rawConnection = config?.connection ?? config?.dbConnection;
+  const rawQuery = config?.query ?? config?.dbQuery;
+  const rawExpression = config?.expression ?? config?.transformExpression;
+
+  return {
+    id,
+    type: "task",
+    label,
+    action,
+    httpMethod,
+    httpUrl: typeof rawUrl === "string" ? rawUrl : "https://api.example.com/action",
+    emailTo: typeof rawTo === "string" ? rawTo : "team@example.com",
+    emailSubject: typeof rawSubject === "string" ? rawSubject : "Workflow notification",
+    emailBody: typeof rawBody === "string" ? rawBody : "A workflow step has completed.",
+    slackChannel: typeof rawChannel === "string" ? rawChannel : "#general",
+    slackMessage: typeof rawMessage === "string" ? rawMessage : "Workflow notification",
+    dbConnection: typeof rawConnection === "string" ? rawConnection : "primary-db",
+    dbQuery: typeof rawQuery === "string" ? rawQuery : "SELECT 1",
+    transformExpression: typeof rawExpression === "string" ? rawExpression : "input",
+  };
+}
+
+/**
  * Safely parses an existing WorkflowGraph into a WizardState.
  * If the graph cannot be mapped to a linear wizard sequence (e.g. empty or unknown),
  * it returns a valid default wizard state populated with the available workflow name and description.
@@ -357,7 +432,10 @@ export function parseGraphToWizardState(
     return createDefaultWizardState(name, description);
   }
 
-  const triggerNode = graph.nodes.find((n) => n.type === "trigger");
+  const edges = Array.isArray(graph.edges) ? graph.edges : [];
+  const nodes = graph.nodes;
+
+  const triggerNode = nodes.find((n) => n.type === "trigger");
   if (!triggerNode) {
     return createDefaultWizardState(name, description);
   }
@@ -380,108 +458,151 @@ export function parseGraphToWizardState(
     webhookPath: String(triggerConfig.path || "/api/v1/webhook"),
   };
 
-  const conditionNodes = graph.nodes.filter((n) => n.type === "condition");
-  const taskNodes = graph.nodes.filter((n) => n.type === "task");
+  const conditionNodes = nodes.filter((n) => n.type === "condition");
+  const taskNodes = nodes.filter((n) => n.type === "task");
   const steps: WizardStep[] = [];
+  const handledConditionTaskIds = new Set<string>();
 
-  if (conditionNodes.length > 0) {
-    // Condition-centered workflow mapping
-    const conditionNode = conditionNodes[0];
-    const conditionConfig = (conditionNode.data?.config ?? {}) as Record<string, unknown>;
+  for (const condNode of conditionNodes) {
+    const trueEdge = edges.find(
+      (e) => e.source === condNode.id && e.sourceHandle === "true",
+    );
+    const falseEdge = edges.find(
+      (e) => e.source === condNode.id && e.sourceHandle === "false",
+    );
+    if (trueEdge?.target) handledConditionTaskIds.add(trueEdge.target);
+    if (falseEdge?.target) handledConditionTaskIds.add(falseEdge.target);
+  }
+
+  function parseSingleCondition(condNode: {
+    id: string;
+    data?: { label?: string; config?: unknown };
+  }): WizardCondition {
+    const conditionConfig = (condNode.data?.config ?? {}) as Record<string, unknown>;
     const clause =
-      conditionConfig.type === "clause" && typeof conditionConfig.clause === "object" && conditionConfig.clause !== null
+      conditionConfig.type === "clause" &&
+      typeof conditionConfig.clause === "object" &&
+      conditionConfig.clause !== null
         ? (conditionConfig.clause as Record<string, unknown>)
         : { left: "approved", op: "equals", right: true };
 
-    const trueEdge = graph.edges.find(
-      (e) => e.source === conditionNode.id && e.sourceHandle === "true",
+    const trueEdge = edges.find(
+      (e) => e.source === condNode.id && e.sourceHandle === "true",
     );
-    const falseEdge = graph.edges.find(
-      (e) => e.source === conditionNode.id && e.sourceHandle === "false",
+    const falseEdge = edges.find(
+      (e) => e.source === condNode.id && e.sourceHandle === "false",
     );
 
     const trueNode = trueEdge ? taskNodes.find((n) => n.id === trueEdge.target) : undefined;
     const falseNode = falseEdge ? taskNodes.find((n) => n.id === falseEdge.target) : undefined;
 
-    const trueTask: WizardTask = trueNode
-      ? {
-          id: trueNode.id,
-          type: "task",
-          label: trueNode.data?.label || "True Action",
-          action: "http",
-          httpMethod: "POST",
-          httpUrl: "https://api.example.com/action",
-          emailTo: "team@example.com",
-          emailSubject: "Notification",
-          emailBody: "Done",
-          slackChannel: "#general",
-          slackMessage: "Done",
-          dbConnection: "db",
-          dbQuery: "SELECT 1",
-          transformExpression: "input",
-        }
-      : createDefaultTask("task-1", "Charge payment");
+    const trueTask: WizardTask = parseTaskConfig(
+      trueNode,
+      trueNode?.id || `task-true-${condNode.id}`,
+      typeof trueNode?.data?.label === "string" ? trueNode.data.label : "True branch action",
+      "http",
+    );
 
-    const falseTask: WizardTask = falseNode
-      ? {
-          id: falseNode.id,
-          type: "task",
-          label: falseNode.data?.label || "False Action",
-          action: "sendEmail",
-          httpMethod: "POST",
-          httpUrl: "https://api.example.com/action",
-          emailTo: "team@example.com",
-          emailSubject: "Notification",
-          emailBody: "Done",
-          slackChannel: "#general",
-          slackMessage: "Done",
-          dbConnection: "db",
-          dbQuery: "SELECT 1",
-          transformExpression: "input",
-        }
-      : createDefaultTask("task-2", "Send review alert", "sendEmail");
+    const falseTask: WizardTask = parseTaskConfig(
+      falseNode,
+      falseNode?.id || `task-false-${condNode.id}`,
+      typeof falseNode?.data?.label === "string" ? falseNode.data.label : "False branch action",
+      "sendEmail",
+    );
 
+    const isTruthyOp = clause.op === "truthy";
     const rightValue = clause.right;
-    const valueType: ConditionValueType =
-      typeof rightValue === "boolean"
+    const valueType: ConditionValueType = isTruthyOp
+      ? "boolean"
+      : typeof rightValue === "boolean"
         ? "boolean"
         : typeof rightValue === "number"
           ? "number"
           : "string";
 
-    steps.push({
-      id: conditionNode.id,
+    return {
+      id: condNode.id,
       type: "condition",
-      label: conditionNode.data?.label || "Condition",
+      label: typeof condNode.data?.label === "string" ? condNode.data.label : "Condition",
       left: String(clause.left ?? "approved"),
       op: (clause.op as ConditionOp) || "equals",
-      right: rightValue ?? true,
-      rawValue: String(rightValue ?? "true"),
+      right: isTruthyOp ? undefined : (rightValue !== undefined ? rightValue : true),
+      rawValue: isTruthyOp ? "" : (rightValue !== undefined ? String(rightValue) : "true"),
       valueType,
       trueTarget: trueTask,
       falseTarget: falseTask,
-    });
-  } else if (taskNodes.length > 0) {
-    // Linear task sequence mapping
-    for (const task of taskNodes) {
-      steps.push({
-        id: task.id,
-        type: "task",
-        label: task.data?.label || "Task",
-        action: "http",
-        httpMethod: "POST",
-        httpUrl: "https://api.example.com/action",
-        emailTo: "team@example.com",
-        emailSubject: "Notification",
-        emailBody: "Done",
-        slackChannel: "#general",
-        slackMessage: "Done",
-        dbConnection: "db",
-        dbQuery: "SELECT 1",
-        transformExpression: "input",
-      });
+    };
+  }
+
+  const visitedNodeIds = new Set<string>();
+  visitedNodeIds.add(triggerNode.id);
+
+  let currentSourceId: string | null = triggerNode.id;
+
+  while (currentSourceId) {
+    const nextEdge = edges.find(
+      (e) => e.source === currentSourceId && (!e.sourceHandle || e.sourceHandle === "true"),
+    );
+
+    if (!nextEdge || !nextEdge.target || visitedNodeIds.has(nextEdge.target)) {
+      break;
     }
-  } else {
+
+    const nextNode = nodes.find((n) => n.id === nextEdge.target);
+    if (!nextNode) break;
+
+    visitedNodeIds.add(nextNode.id);
+
+    if (nextNode.type === "condition") {
+      const condStep = parseSingleCondition(nextNode);
+      if (condStep.trueTarget.id) visitedNodeIds.add(condStep.trueTarget.id);
+      if (condStep.falseTarget.id) visitedNodeIds.add(condStep.falseTarget.id);
+      steps.push(condStep);
+      currentSourceId = condStep.trueTarget.id;
+    } else if (nextNode.type === "task") {
+      if (!handledConditionTaskIds.has(nextNode.id)) {
+        steps.push(
+          parseTaskConfig(
+            nextNode,
+            nextNode.id,
+            typeof nextNode.data?.label === "string" ? nextNode.data.label : "Task",
+            "http",
+          ),
+        );
+      }
+      currentSourceId = nextNode.id;
+    } else {
+      break;
+    }
+  }
+
+  // Preserve any condition nodes not encountered in the primary linear traversal
+  for (const condNode of conditionNodes) {
+    if (!visitedNodeIds.has(condNode.id)) {
+      visitedNodeIds.add(condNode.id);
+      const condStep = parseSingleCondition(condNode);
+      if (condStep.trueTarget.id) visitedNodeIds.add(condStep.trueTarget.id);
+      if (condStep.falseTarget.id) visitedNodeIds.add(condStep.falseTarget.id);
+      steps.push(condStep);
+    }
+  }
+
+  // Preserve any task nodes not encountered in the traversal and not condition branch targets
+  for (const task of taskNodes) {
+    if (!visitedNodeIds.has(task.id) && !handledConditionTaskIds.has(task.id)) {
+      visitedNodeIds.add(task.id);
+      steps.push(
+        parseTaskConfig(
+          task,
+          task.id,
+          typeof task.data?.label === "string" ? task.data.label : "Task",
+          "http",
+        ),
+      );
+    }
+  }
+
+  if (steps.length === 0) {
     steps.push(createDefaultCondition("condition-1", "Is order approved?"));
   }
 
