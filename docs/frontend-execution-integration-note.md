@@ -254,3 +254,36 @@ Blocking before any execution types or UI are written:
    may contain customer data.
 
 Until 1–3 are answered, the frontend will not commit execution types.
+---
+
+## 12. Implementation and verification status — 28-Oct-2026
+
+This section updates the original pre-implementation status above.
+
+### Implemented frontend files
+
+The following execution frontend files now exist:
+
+- `frontend/src/api/executionApi.ts` — execution start, status retrieval, and history API helpers.
+- `frontend/src/pages/ExecutionsPage.tsx` — execution history, pagination, details, statuses, and error handling.
+
+The current implementation has progressed beyond the original plan. The original design notes and proposed API contract assumptions above should not be treated as proof that every backend contract detail has been approved.
+
+### Verification performed
+
+| Check | Result |
+|---|---|
+| `npm.cmd run lint` | Passed with 0 errors and 2 warnings |
+| `npm.cmd run build` | Passed; TypeScript compilation and Vite production build succeeded |
+| Manual execution-flow checklist (Section 9, items 1–9) | Pending; not verified by these build checks |
+| Backend API contract confirmation (Section 11) | Pending confirmation |
+
+The two lint warnings concern `react(set-state-in-effect)` in `ExecutionsPage.tsx` and `WorkflowsPage.tsx`. They did not cause lint or build failure.
+
+### Next verification steps
+
+1. Confirm the outstanding API contract details with the backend owner before treating assumptions as approved.
+2. Run the manual checks in Section 9 against a working backend and frontend.
+3. Update this status only when each check has actually been performed, recording any failures or blockers.
+
+A successful lint or production build confirms static checks and compilation; it does not establish that live execution requests, tenant isolation, polling, or pagination work correctly.
