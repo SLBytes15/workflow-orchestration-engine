@@ -9,9 +9,12 @@ import {
 import WorkflowCard from "../components/workflows/WorkflowCard";
 import WorkflowListState from "../components/workflows/WorkflowListState";
 import {
+  activateWorkflow,
   createWorkflow,
   deleteWorkflow,
   getWorkflows,
+  pauseWorkflow,
+  resumeWorkflow,
   type WorkflowGraph,
 } from "../api/workflowApi";
 import {
@@ -19,10 +22,12 @@ import {
   initialWorkflows,
   mapPersistedWorkflow,
   mergeSavedWorkflows,
+  normalizeStatus,
   removeWorkflow,
   type Workflow,
 } from "../workflowState";
 import { getConditionConfigError } from "../components/workflow/nodes/node.types";
+import ConfirmDeleteDialog from "../components/common/ConfirmDeleteDialog";
 import "./WorkflowsPage.css";
 
 type WorkflowsPageProps = {
@@ -67,10 +72,18 @@ function WorkflowsPage({
   const [nameError, setNameError] = useState("");
   const [apiError, setApiError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [workflowToDelete, setWorkflowToDelete] = useState<Workflow | null>(null);
   const [deletingWorkflowId, setDeletingWorkflowId] = useState<string | null>(
     null,
   );
   const [deleteError, setDeleteError] = useState("");
+
+  // Workflow activation & pause state
+  const [activatingWorkflowId, setActivatingWorkflowId] = useState<string | null>(null);
+  const [pausingWorkflowId, setPausingWorkflowId] = useState<string | null>(null);
+  const [resumingWorkflowId, setResumingWorkflowId] = useState<string | null>(null);
+  const [statusActionMessage, setStatusActionMessage] = useState("");
+  const [statusActionError, setStatusActionError] = useState("");
 
   // Saved workflow loading state
   const [isLoadingSavedWorkflows, setIsLoadingSavedWorkflows] =
@@ -108,21 +121,27 @@ function WorkflowsPage({
     window.setTimeout(() => createButtonRef.current?.focus(), 0);
   }, [isSaving]);
 
+  const onWorkflowsChangeRef = useRef(onWorkflowsChange);
+  useEffect(() => {
+    onWorkflowsChangeRef.current = onWorkflowsChange;
+  }, [onWorkflowsChange]);
+
   // Load workflows saved in the backend.
   useEffect(() => {
-    if (!tenantApiKey?.trim()) {
-      setIsLoadingSavedWorkflows(false);
-      setWorkflowLoadError("");
-      return;
-    }
-
     let cancelled = false;
-    setIsLoadingSavedWorkflows(true);
-    setWorkflowLoadError("");
 
     async function loadWorkflows() {
+      if (!tenantApiKey?.trim()) {
+        setIsLoadingSavedWorkflows(false);
+        setWorkflowLoadError("");
+        return;
+      }
+
+      setIsLoadingSavedWorkflows(true);
+      setWorkflowLoadError("");
+
       try {
-        const result = await getWorkflows(tenantApiKey!);
+        const result = await getWorkflows(tenantApiKey);
 
         if (cancelled) return;
 
@@ -133,12 +152,7 @@ function WorkflowsPage({
             graph: item.graph as WorkflowGraph | undefined,
             name: item.name ?? "Untitled workflow",
             description: item.description ?? "No description provided.",
-            status:
-              item.status === "Active" ||
-              item.status === "Paused" ||
-              item.status === "Draft"
-                ? item.status
-                : "Draft",
+            status: normalizeStatus(item.status),
             version: item.version ?? 1,
             updatedAt: item.updatedAt
               ? String(item.updatedAt).slice(0, 10)
@@ -165,7 +179,7 @@ function WorkflowsPage({
             demosWithoutDuplicates,
             savedWorkflows,
           );
-          onWorkflowsChange?.(merged);
+          onWorkflowsChangeRef.current?.(merged);
           return {
             tenantApiKey: normalizedTenantApiKey,
             workflows: merged,
@@ -194,7 +208,7 @@ function WorkflowsPage({
     return () => {
       cancelled = true;
     };
-  }, [tenantApiKey, normalizedTenantApiKey, workflowReloadKey, onWorkflowsChange]);
+  }, [tenantApiKey, normalizedTenantApiKey, workflowReloadKey]);
 
   // Manage keyboard focus inside the create-workflow dialog.
   useEffect(() => {
@@ -413,18 +427,138 @@ function WorkflowsPage({
     }
   }
 
-  async function handleDeleteWorkflow(workflow: Workflow) {
-    if (!workflow.isPersisted || deletingWorkflowId) return;
-
-    const workflowId = String(workflow.id);
-    if (
-      !window.confirm(
-        `Delete workflow "${workflow.name}"? This action cannot be undone.`,
-      )
-    ) {
+  async function handleActivateWorkflow(workflow: Workflow) {
+    if (!workflow.isPersisted) return;
+    if (!tenantApiKey?.trim()) {
+      setStatusActionError("API authentication is not configured.");
+      setStatusActionMessage("");
       return;
     }
 
+    const workflowId = String(workflow.id);
+    setActivatingWorkflowId(workflowId);
+    setStatusActionError("");
+    setStatusActionMessage("");
+
+    try {
+      const response = await activateWorkflow(workflowId, tenantApiKey);
+      const updatedWorkflow = mapPersistedWorkflow(response.workflow, {
+        name: workflow.name,
+        description: workflow.description,
+      });
+
+      setWorkflowState((current) => {
+        const next = current.workflows.map((item) =>
+          String(item.id) === workflowId ? updatedWorkflow : item,
+        );
+        onWorkflowsChange?.(next);
+        return { ...current, workflows: next };
+      });
+      setStatusActionMessage(`Workflow "${workflow.name}" is now Active.`);
+    } catch (error) {
+      setStatusActionError(
+        error instanceof Error
+          ? error.message
+          : `Failed to activate "${workflow.name}".`,
+      );
+    } finally {
+      setActivatingWorkflowId(null);
+    }
+  }
+
+  async function handlePauseWorkflow(workflow: Workflow) {
+    if (!workflow.isPersisted) return;
+    if (!tenantApiKey?.trim()) {
+      setStatusActionError("API authentication is not configured.");
+      setStatusActionMessage("");
+      return;
+    }
+
+    const workflowId = String(workflow.id);
+    setPausingWorkflowId(workflowId);
+    setStatusActionError("");
+    setStatusActionMessage("");
+
+    try {
+      const response = await pauseWorkflow(workflowId, tenantApiKey);
+      const updatedWorkflow = mapPersistedWorkflow(response.workflow, {
+        name: workflow.name,
+        description: workflow.description,
+      });
+
+      setWorkflowState((current) => {
+        const next = current.workflows.map((item) =>
+          String(item.id) === workflowId ? updatedWorkflow : item,
+        );
+        onWorkflowsChange?.(next);
+        return { ...current, workflows: next };
+      });
+      setStatusActionMessage(`Workflow "${workflow.name}" has been Paused.`);
+    } catch (error) {
+      setStatusActionError(
+        error instanceof Error
+          ? error.message
+          : `Failed to pause "${workflow.name}".`,
+      );
+    } finally {
+      setPausingWorkflowId(null);
+    }
+  }
+
+  async function handleResumeWorkflow(workflow: Workflow) {
+    if (!workflow.isPersisted) return;
+    if (!tenantApiKey?.trim()) {
+      setStatusActionError("API authentication is not configured.");
+      setStatusActionMessage("");
+      return;
+    }
+
+    const workflowId = String(workflow.id);
+    setResumingWorkflowId(workflowId);
+    setStatusActionError("");
+    setStatusActionMessage("");
+
+    try {
+      const response = await resumeWorkflow(workflowId, tenantApiKey);
+      const updatedWorkflow = mapPersistedWorkflow(response.workflow, {
+        name: workflow.name,
+        description: workflow.description,
+      });
+
+      setWorkflowState((current) => {
+        const next = current.workflows.map((item) =>
+          String(item.id) === workflowId ? updatedWorkflow : item,
+        );
+        onWorkflowsChange?.(next);
+        return { ...current, workflows: next };
+      });
+      setStatusActionMessage(`Workflow "${workflow.name}" has been Resumed to Active.`);
+    } catch (error) {
+      setStatusActionError(
+        error instanceof Error
+          ? error.message
+          : `Failed to resume "${workflow.name}".`,
+      );
+    } finally {
+      setResumingWorkflowId(null);
+    }
+  }
+
+  function openDeleteDialog(workflow: Workflow) {
+    setDeleteError("");
+    setWorkflowToDelete(workflow);
+  }
+
+  function closeDeleteDialog() {
+    if (deletingWorkflowId) return;
+    setWorkflowToDelete(null);
+    setDeleteError("");
+  }
+
+  async function handleConfirmDelete() {
+    if (!workflowToDelete || deletingWorkflowId) return;
+
+    const workflowId = String(workflowToDelete.id);
     setDeletingWorkflowId(workflowId);
     setDeleteError("");
     try {
@@ -435,7 +569,7 @@ function WorkflowsPage({
       setWorkflowState((current) => {
         const next =
           current.tenantApiKey === normalizedTenantApiKey
-            ? removeWorkflow(current.workflows, workflow.id)
+            ? removeWorkflow(current.workflows, workflowToDelete.id)
             : current.workflows;
         onWorkflowsChange?.(next);
         return {
@@ -444,11 +578,12 @@ function WorkflowsPage({
         };
       });
       onWorkflowDeleted?.(workflowId);
+      setWorkflowToDelete(null);
     } catch (error) {
       setDeleteError(
         error instanceof Error
           ? error.message
-          : `Unable to delete "${workflow.name}". Please try again.`,
+          : `Unable to delete "${workflowToDelete.name}". Please try again.`,
       );
     } finally {
       setDeletingWorkflowId(null);
@@ -591,8 +726,20 @@ function WorkflowsPage({
         </div>
       </div>
 
-      {(executionMessage || executionError || lastExecution || deleteError) && (
-        <div className="workflows-page__feedback-banner" role="region" aria-label="Workflow execution feedback">
+      {(executionMessage || executionError || lastExecution || deleteError || statusActionMessage || statusActionError) && (
+        <div className="workflows-page__feedback-banner" role="region" aria-label="Workflow feedback">
+          {statusActionMessage && (
+            <p role="status" className="workflows-page__feedback-message workflows-page__feedback-message--success">
+              ✓ {statusActionMessage}
+            </p>
+          )}
+
+          {statusActionError && (
+            <p role="alert" className="workflows-page__feedback-message workflows-page__feedback-message--error">
+              ⚠ {statusActionError}
+            </p>
+          )}
+
           {executionMessage && (
             <p role="status" className="workflows-page__feedback-message workflows-page__feedback-message--success">
               ✓ {executionMessage}
@@ -666,19 +813,36 @@ function WorkflowsPage({
                       onEditWorkflow(String(workflow.id), workflow.graph!)
                   : undefined
               }
-              
+              onEdit={
+                workflow.isPersisted && workflow.graph && onEditWorkflow
+                  ? () => onEditWorkflow(String(workflow.id), workflow.graph!)
+                  : undefined
+              }
+              onActivate={
+                workflow.isPersisted && workflow.status === "Draft"
+                  ? () => void handleActivateWorkflow(workflow)
+                  : undefined
+              }
+              isActivating={activatingWorkflowId === String(workflow.id)}
+              onPause={
+                workflow.isPersisted && workflow.status === "Active"
+                  ? () => void handlePauseWorkflow(workflow)
+                  : undefined
+              }
+              isPausing={pausingWorkflowId === String(workflow.id)}
+              onResume={
+                workflow.isPersisted && workflow.status === "Paused"
+                  ? () => void handleResumeWorkflow(workflow)
+                  : undefined
+              }
+              isResuming={resumingWorkflowId === String(workflow.id)}
               onDelete={
                 workflow.isPersisted
-                  ? () => void handleDeleteWorkflow(workflow)
+                  ? () => openDeleteDialog(workflow)
                   : undefined
               }
               isDeleting={deletingWorkflowId === String(workflow.id)}
               canRun={workflow.isPersisted}
-              onEdit={
-  workflow.isPersisted && workflow.graph && onEditWorkflow
-    ? () => onEditWorkflow(String(workflow.id), workflow.graph!)
-    : undefined
-}
               isRunning={runningWorkflowId === String(workflow.id)}
               onRun={() => void handleRunWorkflow(workflow)}
             />
@@ -815,6 +979,15 @@ function WorkflowsPage({
           </section>
         </div>
       )}
+
+      <ConfirmDeleteDialog
+        isOpen={Boolean(workflowToDelete)}
+        workflowName={workflowToDelete?.name ?? ""}
+        isDeleting={Boolean(deletingWorkflowId)}
+        errorMessage={deleteError}
+        onConfirm={() => void handleConfirmDelete()}
+        onCancel={closeDeleteDialog}
+      />
     </section>
   );
 }

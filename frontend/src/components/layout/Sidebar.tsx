@@ -3,11 +3,11 @@ import { useTheme } from '../../theme/ThemeContext'
 import './Sidebar.css'
 
 const menuItems = [
-  'Dashboard',
-  'Workflows',
-  'Node Preview',
-  'Executions',
-  'Settings',
+  { name: 'Dashboard', icon: '⊞' },
+  { name: 'Workflows', icon: '⑂' },
+  { name: 'Node Preview', icon: '⚡' },
+  { name: 'Executions', icon: '▶' },
+  { name: 'Settings', icon: '⚙' },
 ]
 
 type SidebarProps = {
@@ -31,19 +31,22 @@ function Sidebar({ activePage, onNavigate }: SidebarProps) {
       <nav aria-label="Main menu">
         <ul className="sidebar-menu">
           {menuItems.map((item) => (
-            <li key={item}>
+            <li key={item.name}>
               <button
                 type="button"
                 className={`sidebar-link ${
-                  item === activePage ? 'active' : ''
+                  item.name === activePage ? 'active' : ''
                 }`}
                 aria-current={
-                  item === activePage ? 'page' : undefined
+                  item.name === activePage ? 'page' : undefined
                 }
-                onClick={() => onNavigate(item)}
+                onClick={() => onNavigate(item.name)}
               >
                 <span className="sidebar-link-indicator" aria-hidden="true" />
-                <span className="sidebar-link-text">{item}</span>
+                <span className="sidebar-link-icon" aria-hidden="true">
+                  {item.icon}
+                </span>
+                <span className="sidebar-link-text">{item.name}</span>
               </button>
             </li>
           ))}

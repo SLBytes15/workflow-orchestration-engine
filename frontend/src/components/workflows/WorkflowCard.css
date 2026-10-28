@@ -170,6 +170,39 @@
   color: var(--text);
 }
 
+.workflow-card__activate,
+.workflow-card__resume {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #10b981;
+}
+
+.workflow-card__activate:hover:not(:disabled),
+.workflow-card__resume:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: #10b981;
+  color: #34d399;
+}
+
+.workflow-card__pause {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+}
+
+.workflow-card__pause:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.workflow-card__activate:disabled,
+.workflow-card__pause:disabled,
+.workflow-card__resume:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 .workflow-card__delete {
   background: transparent;
   border: 1px solid rgba(239, 68, 68, 0.2);
