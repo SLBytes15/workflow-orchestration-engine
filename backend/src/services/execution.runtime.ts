@@ -114,6 +114,7 @@ interface ParsedTaskActionConfig {
   input: ValidatedActionInput;
   compensationAction?: CompensationActionIdentifier;
   compensationConfig?: ValidatedActionInput;
+  timeoutMs?: number;
 }
 
 type TaskActionConfigResult =
@@ -262,8 +263,17 @@ function parseTaskActionConfig(value: unknown): TaskActionConfigResult {
 
   const isString = (field: string): boolean =>
     typeof config[field] === "string" && Boolean(config[field]);
+  // A timeout must be a positive, finite millisecond value. Zero and negative
+  // values would fire before a handler could do anything, so they are rejected
+  // rather than silently reinterpreted as "no timeout" or "timed out at once".
+  const timeoutValid =
+    config.timeoutMs === undefined ||
+    (typeof config.timeoutMs === "number" &&
+      Number.isFinite(config.timeoutMs) &&
+      config.timeoutMs > 0);
   const valid =
-    (actionId === "http" &&
+    timeoutValid &&
+    ((actionId === "http" &&
       ["GET", "POST", "PUT", "DELETE", "PATCH"].includes(
         String(config.method),
       ) &&
@@ -272,10 +282,7 @@ function parseTaskActionConfig(value: unknown): TaskActionConfigResult {
         (isRecord(config.headers) &&
           Object.values(config.headers).every(
             (header) => typeof header === "string",
-          ))) &&
-      (config.timeoutMs === undefined ||
-        (typeof config.timeoutMs === "number" &&
-          Number.isFinite(config.timeoutMs)))) ||
+          )))) ||
     (actionId === "sendEmail" &&
       isString("to") &&
       isString("subject") &&
@@ -291,7 +298,7 @@ function parseTaskActionConfig(value: unknown): TaskActionConfigResult {
       isString("connection") &&
       isString("query") &&
       (config.params === undefined || Array.isArray(config.params))) ||
-    (actionId === "transform" && isString("expression"));
+    (actionId === "transform" && isString("expression")));
 
   if (!valid) {
     return invalidConfig();
@@ -341,23 +348,76 @@ function parseTaskActionConfig(value: unknown): TaskActionConfigResult {
         : compensationAction
           ? {}
           : undefined,
+      timeoutMs:
+        typeof config.timeoutMs === "number" ? config.timeoutMs : undefined,
     },
   };
+}
+
+const ACTION_HANDLER_FAILED_ERROR: StructuredActionError = {
+  code: "ACTION_HANDLER_FAILED",
+  message: "The registered action failed unexpectedly.",
+};
+
+const ACTION_TIMEOUT_ERROR: StructuredActionError = {
+  code: "ACTION_TIMEOUT",
+  message: "The task action exceeded its configured timeout.",
+};
+
+/**
+ * Stops *waiting* for a handler. It does not stop the handler.
+ *
+ * A resolved timeout only tells the runtime to treat the step as failed. The
+ * underlying action keeps running, may still perform external side effects, and
+ * its eventual result is discarded. Because the node is recorded as `failed`,
+ * those late side effects are never compensated. This is a known limitation of
+ * a Promise-level timeout and must not be reported as cancellation.
+ */
+function withTimeout(
+  pending: Promise<ActionResult>,
+  timeoutMs: number,
+): Promise<ActionResult> {
+  return new Promise<ActionResult>((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (result: ActionResult): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      resolve(result);
+    };
+
+    timer = setTimeout(
+      () => finish({ ok: false, error: ACTION_TIMEOUT_ERROR }),
+      timeoutMs,
+    );
+
+    pending.then(finish, () =>
+      finish({ ok: false, error: ACTION_HANDLER_FAILED_ERROR }),
+    );
+  });
 }
 
 async function invokeAction(
   action: RegisteredAction,
   input: ValidatedActionInput,
+  timeoutMs?: number,
 ): Promise<ActionResult> {
   try {
-    return await action.execute(input);
+    const pending = action.execute(input);
+    if (timeoutMs === undefined) {
+      return await pending;
+    }
+    return await withTimeout(pending, timeoutMs);
   } catch {
     return {
       ok: false,
-      error: {
-        code: "ACTION_HANDLER_FAILED",
-        message: "The registered action failed unexpectedly.",
-      },
+      error: ACTION_HANDLER_FAILED_ERROR,
     };
   }
 }
@@ -843,7 +903,11 @@ export async function executeWorkflowGraph(
         return fail(error);
       }
 
-      const result = await invokeAction(handler, taskAction.input);
+      const result = await invokeAction(
+        handler,
+        taskAction.input,
+        taskAction.timeoutMs,
+      );
       if (!result.ok) {
         nodeResults.push({
           nodeId: current.id,

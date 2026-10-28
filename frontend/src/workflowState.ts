@@ -13,6 +13,36 @@ export type Workflow = {
   graph?: WorkflowGraph;
 };
 
+export const initialWorkflows: Workflow[] = [
+  {
+    id: 1,
+    isPersisted: false,
+    name: "Payment Processing",
+    description: "Handles payment-related workflow operations.",
+    status: "Active",
+    version: 1,
+    updatedAt: "2026-10-10",
+  },
+  {
+    id: 2,
+    isPersisted: false,
+    name: "Order Management",
+    description: "Manages order creation, tracking, and completion.",
+    status: "Draft",
+    version: 2,
+    updatedAt: "2026-10-09",
+  },
+  {
+    id: 3,
+    isPersisted: false,
+    name: "Customer Notifications",
+    description: "Sends notifications to customers.",
+    status: "Paused",
+    version: 1,
+    updatedAt: "2026-10-08",
+  },
+];
+
 type WorkflowRecord = {
   id?: unknown;
   _id?: unknown;

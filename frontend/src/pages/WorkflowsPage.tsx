@@ -16,6 +16,7 @@ import {
 } from "../api/workflowApi";
 import {
   appendWorkflow,
+  initialWorkflows,
   mapPersistedWorkflow,
   mergeSavedWorkflows,
   removeWorkflow,
@@ -29,43 +30,21 @@ type WorkflowsPageProps = {
   tenantApiKey?: string;
   onEditWorkflow?: (workflowId: string, graph: WorkflowGraph) => void;
   onWorkflowDeleted?: (workflowId: string) => void;
+  workflows?: Workflow[];
+  onWorkflowsChange?: (workflows: Workflow[]) => void;
+  initialCreateOpen?: boolean;
+  onClearInitialCreateOpen?: () => void;
 };
-
-const initialWorkflows: Workflow[] = [
-  {
-    id: 1,
-    isPersisted: false,
-    name: "Payment Processing",
-    description: "Handles payment-related workflow operations.",
-    status: "Active",
-    version: 1,
-    updatedAt: "2026-10-10",
-  },
-  {
-    id: 2,
-    isPersisted: false,
-    name: "Order Management",
-    description: "Manages order creation, tracking, and completion.",
-    status: "Draft",
-    version: 2,
-    updatedAt: "2026-10-09",
-  },
-  {
-    id: 3,
-    isPersisted: false,
-    name: "Customer Notifications",
-    description: "Sends notifications to customers.",
-    status: "Paused",
-    version: 1,
-    updatedAt: "2026-10-08",
-  },
-];
 
 function WorkflowsPage({
   graph,
   tenantApiKey,
   onEditWorkflow,
   onWorkflowDeleted,
+  workflows: propsWorkflows,
+  onWorkflowsChange,
+  initialCreateOpen,
+  onClearInitialCreateOpen,
 }: WorkflowsPageProps) {
   const normalizedTenantApiKey = tenantApiKey?.trim() || null;
   const [workflowState, setWorkflowState] = useState<{
@@ -76,12 +55,13 @@ function WorkflowsPage({
     workflows: initialWorkflows,
   });
   const workflows =
-    workflowState.tenantApiKey === normalizedTenantApiKey
+    propsWorkflows ??
+    (workflowState.tenantApiKey === normalizedTenantApiKey
       ? workflowState.workflows
-      : initialWorkflows;
+      : initialWorkflows);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreateOpen, setIsCreateOpen] = useState(Boolean(initialCreateOpen));
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [nameError, setNameError] = useState("");
@@ -110,8 +90,11 @@ function WorkflowsPage({
   const modalRef = useRef<HTMLElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
-  // Keep the existing effects, callbacks, and handlers below.
-
+  useEffect(() => {
+    if (initialCreateOpen) {
+      onClearInitialCreateOpen?.();
+    }
+  }, [initialCreateOpen, onClearInitialCreateOpen]);
 
   const closeCreateModal = useCallback(() => {
     if (isSaving) return;
@@ -178,12 +161,14 @@ function WorkflowsPage({
               !savedNames.has(workflow.name.toLowerCase()),
           );
 
+          const merged = mergeSavedWorkflows(
+            demosWithoutDuplicates,
+            savedWorkflows,
+          );
+          onWorkflowsChange?.(merged);
           return {
             tenantApiKey: normalizedTenantApiKey,
-            workflows: mergeSavedWorkflows(
-              demosWithoutDuplicates,
-              savedWorkflows,
-            ),
+            workflows: merged,
           };
         });
       } catch (error) {
@@ -209,7 +194,7 @@ function WorkflowsPage({
     return () => {
       cancelled = true;
     };
-  }, [tenantApiKey, normalizedTenantApiKey, workflowReloadKey]);
+  }, [tenantApiKey, normalizedTenantApiKey, workflowReloadKey, onWorkflowsChange]);
 
   // Manage keyboard focus inside the create-workflow dialog.
   useEffect(() => {
@@ -333,15 +318,19 @@ function WorkflowsPage({
         description: trimmedDescription || "No description provided.",
       });
 
-      setWorkflowState((current) => ({
-        tenantApiKey: normalizedTenantApiKey,
-        workflows: appendWorkflow(
+      setWorkflowState((current) => {
+        const next = appendWorkflow(
           current.tenantApiKey === normalizedTenantApiKey
             ? current.workflows
             : initialWorkflows,
           newWorkflow,
-        ),
-      }));
+        );
+        onWorkflowsChange?.(next);
+        return {
+          tenantApiKey: normalizedTenantApiKey,
+          workflows: next,
+        };
+      });
 
       setSearch("");
       setStatusFilter("All");
@@ -443,13 +432,17 @@ function WorkflowsPage({
         throw new Error("API authentication is not configured.");
       }
       await deleteWorkflow(workflowId, tenantApiKey);
-      setWorkflowState((current) => ({
-        ...current,
-        workflows:
+      setWorkflowState((current) => {
+        const next =
           current.tenantApiKey === normalizedTenantApiKey
             ? removeWorkflow(current.workflows, workflow.id)
-            : current.workflows,
-      }));
+            : current.workflows;
+        onWorkflowsChange?.(next);
+        return {
+          ...current,
+          workflows: next,
+        };
+      });
       onWorkflowDeleted?.(workflowId);
     } catch (error) {
       setDeleteError(
@@ -520,7 +513,31 @@ function WorkflowsPage({
           ? `Workflow graph available (${graph.nodes.length} nodes, ${graph.edges.length} edges).`
           : "Open Node Preview to prepare a workflow graph."}
       </p>
+      {executionMessage && (
+        <p role="status" className="workflows-page__note">
+          {executionMessage}
+        </p>
+      )}
 
+      {executionError && (
+        <p role="alert" className="workflows-page__error">
+          {executionError}
+        </p>
+      )}
+
+      {lastExecution && (
+        <p className="workflows-page__note">
+          Execution status: <strong>{lastExecution.status}</strong>
+          {" · "}
+          Nodes recorded: {lastExecution.nodeResults?.length ?? 0}
+        </p>
+      )}
+
+      {deleteError && (
+        <p className="workflows-page__error" role="alert">
+          {deleteError}
+        </p>
+      )}
       <div className="workflows-page__filters">
         <div className="workflows-page__search-field">
           <label htmlFor="workflow-search">Search workflows</label>
@@ -531,10 +548,6 @@ function WorkflowsPage({
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-        </div>
-
-        <div className="workflows-page__filters">
-          {/* Keep your existing search and status-filter code here */}
         </div>
 
         {/* Execution feedback — insert here */}
@@ -557,11 +570,6 @@ function WorkflowsPage({
             Nodes recorded: {lastExecution.nodeResults?.length ?? 0}
           </p>
         )}
-
-        <div className="workflows-page__results-heading">
-          <h2>All workflows</h2>
-          <span>{filteredWorkflows.length} shown</span>
-        </div>
         {deleteError && (
           <p className="workflows-page__error" role="alert">
             {deleteError}
@@ -583,9 +591,41 @@ function WorkflowsPage({
         </div>
       </div>
 
+      {(executionMessage || executionError || lastExecution || deleteError) && (
+        <div className="workflows-page__feedback-banner" role="region" aria-label="Workflow execution feedback">
+          {executionMessage && (
+            <p role="status" className="workflows-page__feedback-message workflows-page__feedback-message--success">
+              ✓ {executionMessage}
+            </p>
+          )}
+
+          {executionError && (
+            <p role="alert" className="workflows-page__feedback-message workflows-page__feedback-message--error">
+              ⚠ {executionError}
+            </p>
+          )}
+
+          {lastExecution && !executionError && (
+            <p className="workflows-page__feedback-message workflows-page__feedback-message--info">
+              Execution status: <strong>{lastExecution.status}</strong>
+              {" · "}
+              Nodes recorded: {lastExecution.nodeResults?.length ?? 0}
+            </p>
+          )}
+
+          {deleteError && (
+            <p role="alert" className="workflows-page__feedback-message workflows-page__feedback-message--error">
+              ⚠ {deleteError}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="workflows-page__results-heading">
         <h2>All workflows</h2>
-        <span>{filteredWorkflows.length} shown</span>
+        <span className="workflows-page__results-count">
+          Showing {filteredWorkflows.length} of {workflows.length} {workflows.length === 1 ? 'workflow' : 'workflows'}
+        </span>
       </div>
 
       {workflows.length === 0 ? (
@@ -626,6 +666,7 @@ function WorkflowsPage({
                       onEditWorkflow(String(workflow.id), workflow.graph!)
                   : undefined
               }
+              
               onDelete={
                 workflow.isPersisted
                   ? () => void handleDeleteWorkflow(workflow)
@@ -634,10 +675,10 @@ function WorkflowsPage({
               isDeleting={deletingWorkflowId === String(workflow.id)}
               canRun={workflow.isPersisted}
               onEdit={
-                workflow.isPersisted && workflow.graph && onEditWorkflow
-                  ? () => onEditWorkflow(String(workflow.id), workflow.graph!)
-                  : undefined
-              }
+  workflow.isPersisted && workflow.graph && onEditWorkflow
+    ? () => onEditWorkflow(String(workflow.id), workflow.graph!)
+    : undefined
+}
               isRunning={runningWorkflowId === String(workflow.id)}
               onRun={() => void handleRunWorkflow(workflow)}
             />

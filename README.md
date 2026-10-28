@@ -1,4 +1,7 @@
 # Multi-Tenant Distributed Workflow & Saga Orchestration Engine
+=======
+ # Workflow & Saga Orchestration Engine
+>>>>>>> origin/member/mahak
 
 Zaalima internship project: a workflow canvas and API for defining, validating,
 persisting, and executing tenant-owned workflow graphs.
