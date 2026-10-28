@@ -186,33 +186,38 @@
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 16px;
+  padding: 24px 20px;
   box-sizing: border-box;
   flex: 1;
   min-width: 0;
+  text-align: left;
 }
 
 .app h1 {
   margin: 0 0 24px;
   font-size: 32px;
+  font-weight: 700;
+  color: var(--text-h);
 }
 
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .app {
-    padding: 12px 8px;
+    padding: 16px 12px;
   }
 
   .app h1 {
-    font-size: 28px;
+    font-size: 26px;
+    margin: 0 0 16px;
   }
 }
 
 .app-layout {
   display: flex;
   min-height: 100vh;
+  width: 100%;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .app-layout {
     flex-direction: column;
   }

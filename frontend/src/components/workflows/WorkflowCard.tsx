@@ -16,6 +16,12 @@ type WorkflowCardProps = {
   isRunning?: boolean;
   canRun?: boolean;
   onEdit?: () => void;
+  onActivate?: () => void;
+  isActivating?: boolean;
+  onPause?: () => void;
+  isPausing?: boolean;
+  onResume?: () => void;
+  isResuming?: boolean;
 };
 function WorkflowCard({
   name,
@@ -30,6 +36,12 @@ function WorkflowCard({
   isRunning = false,
   canRun = false,
   onEdit,
+  onActivate,
+  isActivating = false,
+  onPause,
+  isPausing = false,
+  onResume,
+  isResuming = false,
 }: WorkflowCardProps) {
   return (
     <article className="workflow-card">
@@ -64,7 +76,7 @@ function WorkflowCard({
         </div>
       </div>
 
-      {(onEdit || onRun || onDelete) && (
+      {(onEdit || onActivate || onPause || onResume || onRun || onDelete) && (
         <div className="workflow-card__actions">
           {onEdit && (
             <button
@@ -74,6 +86,42 @@ function WorkflowCard({
               aria-label={`Edit workflow: ${name}`}
             >
               Edit workflow
+            </button>
+          )}
+
+          {status === 'Draft' && onActivate && (
+            <button
+              type="button"
+              className="workflow-card__btn workflow-card__activate"
+              onClick={onActivate}
+              disabled={isActivating}
+              aria-label={`Activate workflow: ${name}`}
+            >
+              {isActivating ? 'Activating...' : 'Activate workflow'}
+            </button>
+          )}
+
+          {status === 'Active' && onPause && (
+            <button
+              type="button"
+              className="workflow-card__btn workflow-card__pause"
+              onClick={onPause}
+              disabled={isPausing}
+              aria-label={`Pause workflow: ${name}`}
+            >
+              {isPausing ? 'Pausing...' : 'Pause workflow'}
+            </button>
+          )}
+
+          {status === 'Paused' && onResume && (
+            <button
+              type="button"
+              className="workflow-card__btn workflow-card__resume"
+              onClick={onResume}
+              disabled={isResuming}
+              aria-label={`Resume workflow: ${name}`}
+            >
+              {isResuming ? 'Resuming...' : 'Resume workflow'}
             </button>
           )}
 

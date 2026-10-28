@@ -12,6 +12,12 @@ interface NodeShellProps {
   selected?: boolean;
 }
 
+const NODE_KIND_ICON: Record<WorkflowNodeType, string> = {
+  trigger: "⚡",
+  task: "⚙",
+  condition: "◆",
+};
+
 function NodeShell({ kind, label, selected = false }: NodeShellProps) {
   return (
     <div
@@ -28,12 +34,23 @@ function NodeShell({ kind, label, selected = false }: NodeShellProps) {
           type="target"
           position={Position.Top}
           id={HANDLE.target}
-          className="workflow-node__handle"
+          className="workflow-node__handle workflow-node__handle--target"
+          aria-label="Input connection"
         />
       )}
 
-      <span className="workflow-node__kind">{NODE_KIND_LABEL[kind]}</span>
-      <p className="workflow-node__label">{label}</p>
+      <div className="workflow-node__header">
+        <span className="workflow-node__icon" aria-hidden="true">
+          {NODE_KIND_ICON[kind]}
+        </span>
+        <span className="workflow-node__kind">{NODE_KIND_LABEL[kind]}</span>
+      </div>
+
+      <div className="workflow-node__body">
+        <p className="workflow-node__label" title={label}>
+          {label}
+        </p>
+      </div>
 
       {kind === "condition" ? (
         <>
@@ -70,7 +87,7 @@ function NodeShell({ kind, label, selected = false }: NodeShellProps) {
           type="source"
           position={Position.Bottom}
           id={HANDLE.source}
-          className="workflow-node__handle"
+          className="workflow-node__handle workflow-node__handle--source"
           aria-label="Next step"
         />
       )}

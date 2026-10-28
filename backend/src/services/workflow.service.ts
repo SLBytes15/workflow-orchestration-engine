@@ -36,6 +36,17 @@ export type ActivateWorkflowResult =
   | { outcome: "invalid_status"; currentStatus: string }
   | { outcome: "invalid_graph"; errors: string[] };
 
+export type PauseWorkflowResult =
+  | { outcome: "success"; workflow: unknown }
+  | { outcome: "not_found" }
+  | { outcome: "invalid_status"; currentStatus: string };
+
+export type ResumeWorkflowResult =
+  | { outcome: "success"; workflow: unknown }
+  | { outcome: "not_found" }
+  | { outcome: "invalid_status"; currentStatus: string }
+  | { outcome: "invalid_graph"; errors: string[] };
+
 export interface WorkflowServiceDependencies {
   createWorkflowRecord(record: CreatedWorkflow): Promise<unknown>;
   findWorkflowRecordsByTenant(tenantId: Types.ObjectId): Promise<unknown[]>;
@@ -54,6 +65,16 @@ export interface WorkflowServiceDependencies {
     workflowId: Types.ObjectId,
   ): Promise<unknown | null>;
   activateWorkflowRecord?(
+    tenantId: Types.ObjectId,
+    workflowId: Types.ObjectId,
+    expectedVersion?: number,
+  ): Promise<unknown | null>;
+  pauseWorkflowRecord?(
+    tenantId: Types.ObjectId,
+    workflowId: Types.ObjectId,
+    expectedVersion?: number,
+  ): Promise<unknown | null>;
+  resumeWorkflowRecord?(
     tenantId: Types.ObjectId,
     workflowId: Types.ObjectId,
     expectedVersion?: number,
@@ -103,6 +124,44 @@ const databaseDependencies: WorkflowServiceDependencies = {
       _id: workflowId,
       tenantId,
       status: { $in: ["draft", "active"] },
+    };
+    if (typeof expectedVersion === "number") {
+      filter.version = expectedVersion;
+    }
+
+    return WorkflowModel.findOneAndUpdate(
+      filter,
+      { $set: { status: "active" } },
+      { new: true, runValidators: true },
+    )
+      .lean()
+      .exec();
+  },
+
+  async pauseWorkflowRecord(tenantId, workflowId, expectedVersion) {
+    const filter: Record<string, unknown> = {
+      _id: workflowId,
+      tenantId,
+      status: { $in: ["active", "paused"] },
+    };
+    if (typeof expectedVersion === "number") {
+      filter.version = expectedVersion;
+    }
+
+    return WorkflowModel.findOneAndUpdate(
+      filter,
+      { $set: { status: "paused" } },
+      { new: true, runValidators: true },
+    )
+      .lean()
+      .exec();
+  },
+
+  async resumeWorkflowRecord(tenantId, workflowId, expectedVersion) {
+    const filter: Record<string, unknown> = {
+      _id: workflowId,
+      tenantId,
+      status: { $in: ["paused", "active"] },
     };
     if (typeof expectedVersion === "number") {
       filter.version = expectedVersion;
@@ -334,6 +393,222 @@ const record: CreatedWorkflow = {
       }
 
       const fallbackUpdated = await dependencies.activateWorkflowRecord(
+        tenantId,
+        id,
+      );
+      if (fallbackUpdated) {
+        return { outcome: "success", workflow: fallbackUpdated };
+      }
+
+      return { outcome: "not_found" };
+    },
+
+    async pauseWorkflow(
+      tenantId: Types.ObjectId,
+      workflowId: string,
+    ): Promise<PauseWorkflowResult> {
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        return { outcome: "not_found" };
+      }
+
+      if (!dependencies.pauseWorkflowRecord) {
+        throw new Error("Workflow pause is not configured");
+      }
+
+      const id = new Types.ObjectId(workflowId);
+
+      if (dependencies.findWorkflowRecordById) {
+        const existing = (await dependencies.findWorkflowRecordById(
+          tenantId,
+          id,
+        )) as
+          | { status?: string; version?: number }
+          | null
+          | undefined;
+
+        if (!existing) {
+          return { outcome: "not_found" };
+        }
+
+        if (
+          existing.status &&
+          existing.status !== "active" &&
+          existing.status !== "paused"
+        ) {
+          return { outcome: "invalid_status", currentStatus: existing.status };
+        }
+
+        const updated = await dependencies.pauseWorkflowRecord(
+          tenantId,
+          id,
+          existing.version,
+        );
+
+        if (updated) {
+          return { outcome: "success", workflow: updated };
+        }
+
+        const recheck = (await dependencies.findWorkflowRecordById(
+          tenantId,
+          id,
+        )) as
+          | { status?: string; version?: number }
+          | null
+          | undefined;
+
+        if (!recheck) {
+          return { outcome: "not_found" };
+        }
+
+        if (
+          recheck.status &&
+          recheck.status !== "active" &&
+          recheck.status !== "paused"
+        ) {
+          return { outcome: "invalid_status", currentStatus: recheck.status };
+        }
+
+        const retryUpdated = await dependencies.pauseWorkflowRecord(
+          tenantId,
+          id,
+          recheck.version,
+        );
+
+        if (retryUpdated) {
+          return { outcome: "success", workflow: retryUpdated };
+        }
+
+        return { outcome: "not_found" };
+      }
+
+      const fallbackUpdated = await dependencies.pauseWorkflowRecord(
+        tenantId,
+        id,
+      );
+      if (fallbackUpdated) {
+        return { outcome: "success", workflow: fallbackUpdated };
+      }
+
+      return { outcome: "not_found" };
+    },
+
+    async resumeWorkflow(
+      tenantId: Types.ObjectId,
+      workflowId: string,
+    ): Promise<ResumeWorkflowResult> {
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        return { outcome: "not_found" };
+      }
+
+      if (!dependencies.resumeWorkflowRecord) {
+        throw new Error("Workflow resume is not configured");
+      }
+
+      const id = new Types.ObjectId(workflowId);
+
+      if (dependencies.findWorkflowRecordById) {
+        const existing = (await dependencies.findWorkflowRecordById(
+          tenantId,
+          id,
+        )) as
+          | { status?: string; graph?: unknown; version?: number }
+          | null
+          | undefined;
+
+        if (!existing) {
+          return { outcome: "not_found" };
+        }
+
+        if (
+          existing.status &&
+          existing.status !== "paused" &&
+          existing.status !== "active"
+        ) {
+          return { outcome: "invalid_status", currentStatus: existing.status };
+        }
+
+        const graphErrors = validateWorkflowGraph(existing.graph);
+        const conditionErrors =
+          graphErrors.length === 0
+            ? validateConditionConfigurations(existing.graph)
+            : [];
+        const triggerErrors =
+          graphErrors.length === 0
+            ? validateTriggerConfigurations(existing.graph)
+            : [];
+        const allErrors = [
+          ...graphErrors,
+          ...conditionErrors,
+          ...triggerErrors,
+        ];
+
+        if (allErrors.length > 0) {
+          return { outcome: "invalid_graph", errors: allErrors };
+        }
+
+        const updated = await dependencies.resumeWorkflowRecord(
+          tenantId,
+          id,
+          existing.version,
+        );
+
+        if (updated) {
+          return { outcome: "success", workflow: updated };
+        }
+
+        const recheck = (await dependencies.findWorkflowRecordById(
+          tenantId,
+          id,
+        )) as
+          | { status?: string; graph?: unknown; version?: number }
+          | null
+          | undefined;
+
+        if (!recheck) {
+          return { outcome: "not_found" };
+        }
+
+        if (
+          recheck.status &&
+          recheck.status !== "paused" &&
+          recheck.status !== "active"
+        ) {
+          return { outcome: "invalid_status", currentStatus: recheck.status };
+        }
+
+        const recheckGraphErrors = validateWorkflowGraph(recheck.graph);
+        const recheckConditionErrors =
+          recheckGraphErrors.length === 0
+            ? validateConditionConfigurations(recheck.graph)
+            : [];
+        const recheckTriggerErrors =
+          recheckGraphErrors.length === 0
+            ? validateTriggerConfigurations(recheck.graph)
+            : [];
+        const recheckAllErrors = [
+          ...recheckGraphErrors,
+          ...recheckConditionErrors,
+          ...recheckTriggerErrors,
+        ];
+
+        if (recheckAllErrors.length > 0) {
+          return { outcome: "invalid_graph", errors: recheckAllErrors };
+        }
+
+        const retryUpdated = await dependencies.resumeWorkflowRecord(
+          tenantId,
+          id,
+          recheck.version,
+        );
+
+        if (retryUpdated) {
+          return { outcome: "success", workflow: retryUpdated };
+        }
+
+        return { outcome: "not_found" };
+      }
+
+      const fallbackUpdated = await dependencies.resumeWorkflowRecord(
         tenantId,
         id,
       );

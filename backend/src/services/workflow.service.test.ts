@@ -66,6 +66,42 @@ function setup() {
       return null;
     },
 
+    async pauseWorkflowRecord(tenantId, workflowId, expectedVersion) {
+      const record = storedRecords.find(
+        (r) => r.tenantId.equals(tenantId) && (r as any)._id?.equals(workflowId),
+      );
+      if (!record) return null;
+      if (
+        expectedVersion !== undefined &&
+        (record as any).version !== expectedVersion
+      ) {
+        return null;
+      }
+      if (record.status === "active" || (record.status as string) === "paused") {
+        (record as any).status = "paused";
+        return record;
+      }
+      return null;
+    },
+
+    async resumeWorkflowRecord(tenantId, workflowId, expectedVersion) {
+      const record = storedRecords.find(
+        (r) => r.tenantId.equals(tenantId) && (r as any)._id?.equals(workflowId),
+      );
+      if (!record) return null;
+      if (
+        expectedVersion !== undefined &&
+        (record as any).version !== expectedVersion
+      ) {
+        return null;
+      }
+      if (record.status === "paused" || (record.status as string) === "active") {
+        (record as any).status = "active";
+        return record;
+      }
+      return null;
+    },
+
     async findWorkflowRecordById(tenantId, workflowId) {
       const record = storedRecords.find(
         (r) => r.tenantId.equals(tenantId) && (r as any)._id?.equals(workflowId),
@@ -786,4 +822,176 @@ test("rejects activation when the workflow event trigger configuration has an un
     );
   }
   assert.equal((context.storedRecords[0] as any).status, "draft");
+});
+
+test("pauses an active workflow and updates its status to paused", async () => {
+  const context = setup();
+  const tenantId = new Types.ObjectId();
+
+  const created = (await context.service.createWorkflow({
+    tenantId,
+    input: { name: "Active workflow", graph: validGraph },
+  })) as { _id: Types.ObjectId; status: string };
+
+  // First activate
+  await context.service.activateWorkflow(tenantId, created._id.toString());
+  assert.equal((context.storedRecords[0] as any).status, "active");
+
+  // Pause
+  const result = await context.service.pauseWorkflow(tenantId, created._id.toString());
+  assert.equal(result.outcome, "success");
+  if (result.outcome === "success") {
+    assert.equal((result.workflow as { status: string }).status, "paused");
+  }
+  assert.equal((context.storedRecords[0] as any).status, "paused");
+});
+
+test("repeated pause of a paused workflow succeeds idempotently", async () => {
+  const context = setup();
+  const tenantId = new Types.ObjectId();
+
+  const created = (await context.service.createWorkflow({
+    tenantId,
+    input: { name: "Active workflow", graph: validGraph },
+  })) as { _id: Types.ObjectId };
+
+  await context.service.activateWorkflow(tenantId, created._id.toString());
+  await context.service.pauseWorkflow(tenantId, created._id.toString());
+
+  // Second pause call
+  const second = await context.service.pauseWorkflow(tenantId, created._id.toString());
+  assert.equal(second.outcome, "success");
+  if (second.outcome === "success") {
+    assert.equal((second.workflow as { status: string }).status, "paused");
+  }
+});
+
+test("rejects pausing a draft workflow with invalid_status", async () => {
+  const context = setup();
+  const tenantId = new Types.ObjectId();
+
+  const created = (await context.service.createWorkflow({
+    tenantId,
+    input: { name: "Draft workflow", graph: validGraph },
+  })) as { _id: Types.ObjectId; status: string };
+
+  const result = await context.service.pauseWorkflow(tenantId, created._id.toString());
+  assert.deepEqual(result, {
+    outcome: "invalid_status",
+    currentStatus: "draft",
+  });
+  assert.equal((context.storedRecords[0] as any).status, "draft");
+});
+
+test("resumes a paused workflow and restores status to active", async () => {
+  const context = setup();
+  const tenantId = new Types.ObjectId();
+
+  const created = (await context.service.createWorkflow({
+    tenantId,
+    input: { name: "Workflow to resume", graph: validGraph },
+  })) as { _id: Types.ObjectId };
+
+  await context.service.activateWorkflow(tenantId, created._id.toString());
+  await context.service.pauseWorkflow(tenantId, created._id.toString());
+  assert.equal((context.storedRecords[0] as any).status, "paused");
+
+  const result = await context.service.resumeWorkflow(tenantId, created._id.toString());
+  assert.equal(result.outcome, "success");
+  if (result.outcome === "success") {
+    assert.equal((result.workflow as { status: string }).status, "active");
+  }
+  assert.equal((context.storedRecords[0] as any).status, "active");
+});
+
+test("repeated resume of an active workflow succeeds idempotently", async () => {
+  const context = setup();
+  const tenantId = new Types.ObjectId();
+
+  const created = (await context.service.createWorkflow({
+    tenantId,
+    input: { name: "Workflow", graph: validGraph },
+  })) as { _id: Types.ObjectId };
+
+  await context.service.activateWorkflow(tenantId, created._id.toString());
+  await context.service.pauseWorkflow(tenantId, created._id.toString());
+  await context.service.resumeWorkflow(tenantId, created._id.toString());
+
+  const second = await context.service.resumeWorkflow(tenantId, created._id.toString());
+  assert.equal(second.outcome, "success");
+  if (second.outcome === "success") {
+    assert.equal((second.workflow as { status: string }).status, "active");
+  }
+});
+
+test("rejects resuming a draft workflow with invalid_status", async () => {
+  const context = setup();
+  const tenantId = new Types.ObjectId();
+
+  const created = (await context.service.createWorkflow({
+    tenantId,
+    input: { name: "Draft workflow", graph: validGraph },
+  })) as { _id: Types.ObjectId; status: string };
+
+  const result = await context.service.resumeWorkflow(tenantId, created._id.toString());
+  assert.deepEqual(result, {
+    outcome: "invalid_status",
+    currentStatus: "draft",
+  });
+  assert.equal((context.storedRecords[0] as any).status, "draft");
+});
+
+test("rejects resuming a paused workflow when its graph is invalid", async () => {
+  const context = setup();
+  const tenantId = new Types.ObjectId();
+
+  const created = (await context.service.createWorkflow({
+    tenantId,
+    input: { name: "Workflow", graph: validGraph },
+  })) as { _id: Types.ObjectId };
+
+  await context.service.activateWorkflow(tenantId, created._id.toString());
+  await context.service.pauseWorkflow(tenantId, created._id.toString());
+
+  // Corrupt graph in storage
+  (context.storedRecords[0] as any).graph = {
+    ...validGraph,
+    nodes: [],
+  };
+
+  const result = await context.service.resumeWorkflow(tenantId, created._id.toString());
+  assert.equal(result.outcome, "invalid_graph");
+  assert.equal((context.storedRecords[0] as any).status, "paused");
+});
+
+test("returns not_found when attempting to pause or resume another tenant's workflow", async () => {
+  const context = setup();
+  const tenantA = new Types.ObjectId();
+  const tenantB = new Types.ObjectId();
+
+  const created = (await context.service.createWorkflow({
+    tenantId: tenantA,
+    input: { name: "Tenant A workflow", graph: validGraph },
+  })) as { _id: Types.ObjectId };
+
+  await context.service.activateWorkflow(tenantA, created._id.toString());
+
+  const pauseResult = await context.service.pauseWorkflow(tenantB, created._id.toString());
+  assert.deepEqual(pauseResult, { outcome: "not_found" });
+
+  await context.service.pauseWorkflow(tenantA, created._id.toString());
+
+  const resumeResult = await context.service.resumeWorkflow(tenantB, created._id.toString());
+  assert.deepEqual(resumeResult, { outcome: "not_found" });
+});
+
+test("rejects malformed workflow IDs for pause and resume", async () => {
+  const context = setup();
+  const tenantId = new Types.ObjectId();
+
+  const pauseResult = await context.service.pauseWorkflow(tenantId, "invalid-id");
+  assert.deepEqual(pauseResult, { outcome: "not_found" });
+
+  const resumeResult = await context.service.resumeWorkflow(tenantId, "invalid-id");
+  assert.deepEqual(resumeResult, { outcome: "not_found" });
 });

@@ -64,10 +64,14 @@ function readWorkflowId(record: WorkflowRecord): string | undefined {
   }
 }
 
-function normalizeStatus(status: unknown): WorkflowStatus {
-  return status === "Active" || status === "Paused" || status === "Draft"
-    ? status
-    : "Draft";
+export function normalizeStatus(status: unknown): WorkflowStatus {
+  if (typeof status === "string") {
+    const s = status.trim().toLowerCase();
+    if (s === "active") return "Active";
+    if (s === "paused") return "Paused";
+    if (s === "draft") return "Draft";
+  }
+  return "Draft";
 }
 
 export function mapPersistedWorkflow(
