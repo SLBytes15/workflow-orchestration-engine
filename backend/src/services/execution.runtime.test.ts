@@ -139,7 +139,7 @@ describe("executeWorkflowGraph", () => {
     );
   });
 
-  
+
 it("fails when numeric comparison operands are invalid", async () => {
   const graph = createGraph();
 
@@ -619,5 +619,74 @@ it("fails when numeric comparison operands are invalid", async () => {
         `timeoutMs=${String(timeoutMs)} must not dispatch the handler`,
       );
     }
+  });
+
+  it("does not redispatch a failed task even when the node declares a retry policy", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "GET",
+      url: "https://example.test/dispatch",
+      retry: { attempts: 5, backoffMs: 10 },
+    };
+
+    let calls = 0;
+
+    const result = await executeWorkflowGraph(graph, { approved: true }, {
+      taskActions: {
+        http: {
+          execute: async () => {
+            calls += 1;
+            return {
+              ok: false as const,
+              error: { code: "HTTP_503", message: "Upstream unavailable." },
+            };
+          },
+        },
+      },
+    });
+
+    // A declared retry policy must not cause a second dispatch today.
+    assert.equal(calls, 1);
+    assert.equal(result.status, "failed");
+    assert.deepEqual(result.error, {
+      code: "HTTP_503",
+      message: "Upstream unavailable.",
+    });
+    assert.equal(
+      result.nodeResults.filter((node) => node.nodeId === "task-true").length,
+      1,
+    );
+  });
+
+  it("records a single attempt when a task handler throws and retry metadata is present", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "GET",
+      url: "https://example.test/dispatch",
+      retry: { attempts: 3, backoffMs: 10 },
+    };
+
+    let calls = 0;
+
+    const result = await executeWorkflowGraph(graph, { approved: true }, {
+      taskActions: {
+        http: {
+          execute: async () => {
+            calls += 1;
+            throw new Error("transport exploded");
+          },
+        },
+      },
+    });
+
+    assert.equal(calls, 1);
+    assert.equal(result.status, "failed");
+    assert.equal(result.error?.code, "ACTION_HANDLER_FAILED");
   });
 });
