@@ -237,11 +237,11 @@ function ExecutionsPage({
 
         setNextCursor(result.pagination.nextCursor)
         setHasMore(result.pagination.hasMore)
-      } catch (error) {
+      } catch {
         if (requestId !== historyRequestId.current) return
 
         setHistoryError(
-          getRequestError(error, 'Unable to load execution history.'),
+          'Unable to load execution history. Check your connection and try again.',
         )
       } finally {
         if (requestId === historyRequestId.current) {
@@ -311,6 +311,7 @@ function ExecutionsPage({
           onClick={() => setRefreshToken((value) => value + 1)}
           disabled={
             loadingHistory ||
+            loadingMore ||
             loadingWorkflows ||
             !selectedWorkflowId
           }
@@ -376,7 +377,7 @@ function ExecutionsPage({
         )}
 
       {selectedWorkflowId && (
-        <section aria-labelledby="execution-history-heading">
+        <section aria-labelledby="execution-history-heading" aria-busy={loadingHistory || loadingMore}>
           <div className="executions-page__section-heading">
             <h2 id="execution-history-heading">
               Execution history
@@ -386,14 +387,21 @@ function ExecutionsPage({
 
           {loadingHistory && (
             <p role="status" aria-live="polite">
-              Loading execution history…
+              Loading execution history...
             </p>
           )}
 
           {historyError && (
-            <p className="executions-page__error" role="alert">
-              {historyError}
-            </p>
+            <div className="executions-page__error-state" role="alert">
+              <p>{historyError}</p>
+              <button
+                type="button"
+                onClick={() => setRefreshToken((value) => value + 1)}
+                disabled={loadingHistory || loadingMore}
+              >
+                Retry loading history
+              </button>
+            </div>
           )}
 
           {!loadingHistory &&
@@ -500,7 +508,7 @@ function ExecutionsPage({
                     >
                       {detailsLoadingId ===
                       (execution.id ?? execution._id)
-                        ? 'Loading details…'
+                        ? 'Loading detailsâ€¦'
                         : 'View details'}
                     </button>
                   </article>
@@ -520,7 +528,7 @@ function ExecutionsPage({
                 !nextCursor
               }
             >
-              {loadingMore ? 'Loading…' : 'Load more'}
+              {loadingMore ? 'Loading more executionsâ€¦' : 'Load more'}
             </button>
           )}
         </section>

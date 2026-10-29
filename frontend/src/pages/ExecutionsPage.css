@@ -233,3 +233,36 @@
   margin: 6px 0;
   overflow-wrap: anywhere;
 }
+
+/* Execution history loading, retry, and keyboard-accessible controls. */
+.executions-page__error-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+}
+.executions-page__error-state p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.executions-page button:focus-visible,
+.executions-page select:focus-visible {
+  outline: 3px solid var(--focus-color, #2563eb);
+  outline-offset: 3px;
+}
+@media (max-width: 640px) {
+  .executions-page__section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .executions-page__error-state {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
