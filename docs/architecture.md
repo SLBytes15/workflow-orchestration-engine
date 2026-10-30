@@ -55,11 +55,16 @@ workflow operations fail.
 Stores tenant-scoped application and workflow data.
 
 ### Real-Time Layer
-Provides execution tracing to the frontend.
+**Approved design:** The MVP adds best-effort WebSocket execution lifecycle
+notifications; REST remains the source of truth. See
+[WebSocket Execution Updates](./websocket-execution-updates.md) for the
+approved contract and current implementation status. This layer is not
+implemented on the current branch.
 
 ## 3. Architecture Decisions
 
-To be finalized after requirements analysis.
+The WebSocket MVP decisions are approved; other decisions remain open as noted
+below.
 
 ## 4. Open Technical Decisions
 
@@ -67,7 +72,7 @@ To be finalized after requirements analysis.
 - Queue/execution architecture
 - Worker architecture
 - Authentication/API-key design
-- WebSocket event structure
+- WebSocket ticket response and handshake transport
 
 
 - Header: x-api-key
