@@ -5,6 +5,7 @@ import {
   getWorkflowExecutions,
   type WorkflowExecution,
 } from '../api/executionApi'
+import { connectExecutionUpdates } from '../api/executionRealtime'
 import './ExecutionsPage.css'
 
 type SavedWorkflow = {
@@ -261,6 +262,60 @@ function ExecutionsPage({
     }
   }, [loadHistory, refreshToken])
 
+  useEffect(() => {
+    if (!tenantApiKey?.trim() || !selectedWorkflowId) {
+      return
+    }
+
+    return connectExecutionUpdates({
+      apiKey: tenantApiKey,
+
+      onEvent: (event) => {
+        if (event.data.workflowId !== selectedWorkflowId) {
+          return
+        }
+
+        setExecutions((current) =>
+          current.map((execution) => {
+            const id = execution.id ?? execution._id
+
+            if (id !== event.data.executionId) {
+              return execution
+            }
+
+            return {
+              ...execution,
+              status: event.data.status,
+              updatedAt: event.data.updatedAt,
+            }
+          }),
+        )
+
+        setDetails((current) => {
+          const id = current?.id ?? current?._id
+
+          if (
+            !current ||
+            id !== event.data.executionId ||
+            current.workflowId !== event.data.workflowId
+          ) {
+            return current
+          }
+
+          return {
+            ...current,
+            status: event.data.status,
+            updatedAt: event.data.updatedAt,
+          }
+        })
+      },
+
+      onReconnect: () => {
+        // REST remains the source of truth after missed WebSocket events.
+        void loadHistory(false)
+      },
+    })
+  }, [tenantApiKey, selectedWorkflowId, loadHistory])
   async function showDetails(execution: WorkflowExecution) {
     const requestId = ++detailsRequestId.current
     const id = execution.id ?? execution._id
