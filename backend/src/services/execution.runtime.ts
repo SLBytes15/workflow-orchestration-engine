@@ -304,6 +304,30 @@ function parseTaskActionConfig(value: unknown): TaskActionConfigResult {
     return invalidConfig();
   }
 
+  // `retry` is validated but not executed (decision D1, 30 Oct 2026). Only the
+  // shape is checked here; the attempt cap and backoff policy belong to the
+  // future implementation, so an oversized `attempts` is not rejected today.
+  const retry = config.retry;
+  const retryValid =
+    retry === undefined ||
+    (isRecord(retry) &&
+      typeof retry.attempts === "number" &&
+      Number.isInteger(retry.attempts) &&
+      retry.attempts >= 1 &&
+      typeof retry.backoffMs === "number" &&
+      Number.isFinite(retry.backoffMs) &&
+      retry.backoffMs >= 0);
+  if (!retryValid) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_RETRY_CONFIG",
+        message:
+          "The task retry configuration is invalid: attempts must be an integer of at least 1 and backoffMs a non-negative number.",
+      },
+    };
+  }
+
   const compensationAction = config.compensationAction;
   const compensationConfig = config.compensationConfig;
   if (compensationAction === undefined && compensationConfig !== undefined) {
@@ -330,9 +354,15 @@ function parseTaskActionConfig(value: unknown): TaskActionConfigResult {
     };
   }
 
+  // Orchestration-only fields stay out of the handler payload (decision D1).
+  // A handler that forwards its input must never transmit a retry policy or a
+  // runtime timeout to an external service. `timeoutMs` still bounds the wait;
+  // it is read from the parsed config, not from the handler input.
   const taskConfig = { ...config };
   delete taskConfig.compensationAction;
   delete taskConfig.compensationConfig;
+  delete taskConfig.retry;
+  delete taskConfig.timeoutMs;
 
   return {
     ok: true,

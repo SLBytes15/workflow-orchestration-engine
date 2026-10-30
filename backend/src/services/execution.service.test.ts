@@ -2002,3 +2002,86 @@ test("keeps the execution outcome when the notifier throws", async () => {
   assert.equal(result.status, "completed");
   assert.equal(updates.length, 2);
 });
+
+test("keeps retry and timeoutMs out of task and compensation payloads", async () => {
+  const graph = sagaWorkflow([
+    {
+      nodeId: "task-a",
+      actionId: "transform",
+      compensationActionId: "undo",
+      retry: { attempts: 3, backoffMs: 10 },
+      timeoutMs: 10_000,
+    },
+    {
+      nodeId: "task-b",
+      actionId: "transform",
+      retry: { attempts: 2, backoffMs: 5 },
+      timeoutMs: 10_000,
+    },
+  ]);
+  const taskInputs: Record<string, ValidatedActionInput> = {};
+  const compensationInputs: Record<string, ValidatedActionInput> = {};
+  const updates: Array<{ expectedStatus: string; update: Record<string, unknown> }> = [];
+
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => {
+          const taskId = String(input.taskId);
+          taskInputs[taskId] = input;
+
+          if (taskId === "task-b") {
+            return {
+              ok: false as const,
+              error: { code: "DOWNSTREAM_FAILED", message: "Downstream failed." },
+            };
+          }
+
+          return { ok: true as const, output: { taskId } };
+        },
+      },
+    },
+    compensationActions: {
+      undo: {
+        execute: async (context) => {
+          compensationInputs[context.nodeId] = context.taskConfig;
+          return { ok: true as const };
+        },
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+  );
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.equal(result.status, "compensated");
+
+  // Neither payload may carry orchestration-only controls.
+  for (const payload of Object.values(taskInputs)) {
+    assert.equal("retry" in payload, false);
+    assert.equal("timeoutMs" in payload, false);
+  }
+  for (const payload of Object.values(compensationInputs)) {
+    assert.equal("retry" in payload, false);
+    assert.equal("timeoutMs" in payload, false);
+  }
+
+  assert.deepEqual(taskInputs["task-a"], {
+    action: "transform",
+    expression: "task-a",
+    taskId: "task-a",
+  });
+  assert.deepEqual(compensationInputs["task-a"], {
+    action: "transform",
+    expression: "task-a",
+    taskId: "task-a",
+  });
+
+  // Compensation still drives the persisted lifecycle; the payload change did
+  // not alter it.
+  assert.equal(updates[0].update.status, "running");
+  assert.equal(updates[updates.length - 1].update.status, "compensated");
+  assert.ok(updates.some((entry) => entry.update.status === "compensating"));
+});

@@ -81,21 +81,16 @@ type ExecutableTaskConfig = TaskConfig & TaskCompensation;
 // Optional task-level controls (apply to any action):
 interface TaskExtras {
   retry?: { attempts: number; backoffMs: number };
+  timeoutMs?: number;
   continueOnError?: boolean;
 }
-
-// ── Condition ──────────────────────────────────────────────────────
-type ConditionOp =
-  | "equals"|"notEquals"|"gt"|"gte"|"lt"|"lte"
-  | "contains"|"startsWith"|"matches"|"truthy";
-
-interface ConditionClause { left: string; op: ConditionOp; right?: unknown }
-
-type ConditionConfig =
-  | { type: "clause"; clause: ConditionClause }
-  | { type: "group";  logic: "and"|"or"; clauses: ConditionClause[] }
-  | { type: "js";     expression: string };
 ```
+
+`retry` and `timeoutMs` are **orchestration-only** fields. Both are validated by the runtime
+(`timeoutMs` must be a positive finite number; `retry.attempts` an integer ≥ 1 and
+`retry.backoffMs` a finite number ≥ 0, otherwise `INVALID_RETRY_CONFIG`) and both are removed
+before the task config reaches a handler or a compensation handler. `retry` is accepted but
+**not executed** — declaring it does not cause a redispatch (Week 3 decision D1/D3).
 
 ---
 
