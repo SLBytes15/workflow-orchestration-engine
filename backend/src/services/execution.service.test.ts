@@ -519,6 +519,8 @@ interface SagaTask {
   nodeId: string;
   actionId: string;
   compensationActionId?: string;
+  timeoutMs?: number;
+  retry?: { attempts: number; backoffMs: number };
 }
 
 function sagaWorkflow(tasks: SagaTask[]) {
@@ -540,6 +542,7 @@ function sagaWorkflow(tasks: SagaTask[]) {
           action: task.actionId,
           expression: task.nodeId,
           taskId: task.nodeId,
+          ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
           ...(task.compensationActionId
             ? {
                 compensationAction: task.compensationActionId,
@@ -547,6 +550,7 @@ function sagaWorkflow(tasks: SagaTask[]) {
               }
             : {}),
         },
+        ...(task.retry ? { retry: task.retry } : {}),
       },
     })),
   ];
@@ -1526,5 +1530,305 @@ test("reports ambiguous compensation outcome when its terminal checkpoint fails"
   assert.equal(
     (persisted.nodeResults as RuntimeNodeResult[])[1].compensation?.status,
     "running",
+  );
+});
+
+test("compensates earlier completed tasks when a later task times out", async () => {
+  const graph = sagaWorkflow([
+    {
+      nodeId: "task-a",
+      actionId: "transform",
+      compensationActionId: "undo-a",
+    },
+    { nodeId: "task-b", actionId: "transform", timeoutMs: 25 },
+  ]);
+  const actionOrder: string[] = [];
+  const updates: Array<{
+    expectedStatus: string;
+    update: Record<string, unknown>;
+  }> = [];
+  let releasedReservation = false;
+
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => {
+          const taskId = input.taskId;
+          actionOrder.push(`task-${String(taskId)}`);
+          if (taskId === "task-a") {
+            return {
+              ok: true as const,
+              output: { reservationId: "reservation-1" },
+            };
+          }
+          // Never settles: the configured timeout must be what ends the wait.
+          return new Promise<never>(() => {});
+        },
+      },
+    },
+    compensationActions: {
+      "undo-a": {
+        execute: async (context) => {
+          actionOrder.push("compensate-a");
+          assert.equal(context.nodeId, "task-a");
+          assert.deepEqual(context.taskOutput, {
+            reservationId: "reservation-1",
+          });
+          releasedReservation = true;
+          return { ok: true as const };
+        },
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+  );
+
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  // The timed-out node must not prevent compensation of earlier work.
+  assert.deepEqual(actionOrder, [
+    "task-task-a",
+    "task-task-b",
+    "compensate-a",
+  ]);
+  assert.equal(releasedReservation, true);
+  assert.equal(result.status, "compensated");
+  assert.deepEqual(result.error, {
+    code: "ACTION_TIMEOUT",
+    message: "The task action exceeded its configured timeout.",
+  });
+  assert.deepEqual(
+    result.nodeResults.map((node: { nodeId: string; status: string }) => [
+      node.nodeId,
+      node.status,
+    ]),
+    [
+      ["trigger-1", "completed"],
+      ["task-a", "completed"],
+      ["task-b", "failed"],
+    ],
+  );
+  assert.equal(result.nodeResults[2]?.error?.code, "ACTION_TIMEOUT");
+  assert.equal(result.nodeResults[1]?.compensation?.status, "completed");
+  assert.equal(result.nodeResults[2]?.compensation, undefined);
+  assert.deepEqual(
+    updates.map((entry) => entry.update.status),
+    ["running", "compensating", "compensating", "compensating", "compensated"],
+  );
+  assert.deepEqual(
+    updates.map((entry) => entry.expectedStatus),
+    ["queued", "running", "compensating", "compensating", "compensating"],
+  );
+});
+
+test("keeps the recorded timeout failure when the handler settles late", async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandled);
+
+  const runScenario = async (lateSettlement: "resolve" | "reject") => {
+    let resolveLate:
+      | ((value: { ok: true; output: { late: true } }) => void)
+      | undefined;
+    let rejectLate: ((reason: Error) => void) | undefined;
+    const lateResult = new Promise<{ ok: true; output: { late: true } }>(
+      (resolve, reject) => {
+        resolveLate = resolve;
+        rejectLate = reject;
+      },
+    );
+
+    const graph = sagaWorkflow([
+      {
+        nodeId: "task-a",
+        actionId: "transform",
+        compensationActionId: "undo-a",
+      },
+      { nodeId: "task-b", actionId: "transform", timeoutMs: 25 },
+    ]);
+    const updates: Array<{
+      expectedStatus: string;
+      update: Record<string, unknown>;
+    }> = [];
+    let compensationCalls = 0;
+
+    const actions: ActionRegistry = {
+      taskActions: {
+        transform: {
+          execute: async (input: ValidatedActionInput) => {
+            if (input.taskId === "task-b") {
+              return lateResult;
+            }
+            return {
+              ok: true as const,
+              output: { reservationId: "reservation-1" },
+            };
+          },
+        },
+      },
+      compensationActions: {
+        "undo-a": {
+          execute: async () => {
+            compensationCalls += 1;
+            return { ok: true as const };
+          },
+        },
+      },
+    };
+
+    const service = createExecutionService(
+      sagaDependencies(graph, actions, updates),
+    );
+
+    const result = await service.startExecution(tenantId, String(workflowId));
+
+    const nodeResultsAtTimeout = structuredClone(result.nodeResults);
+    const checkpointsAtTimeout = updates.length;
+
+    assert.equal(result.status, "compensated");
+    assert.equal(result.nodeResults[2]?.status, "failed");
+    assert.equal(result.nodeResults[2]?.error?.code, "ACTION_TIMEOUT");
+    assert.equal(compensationCalls, 1);
+
+    if (lateSettlement === "resolve") {
+      resolveLate?.({ ok: true, output: { late: true } });
+    } else {
+      rejectLate?.(new Error("late handler failure"));
+    }
+
+    // Let the late settlement propagate through the discarded race handlers.
+    await new Promise((done) => setTimeout(done, 20));
+
+    // The late result must not overwrite the recorded failure ...
+    assert.deepEqual(result.nodeResults, nodeResultsAtTimeout);
+    assert.equal(result.nodeResults[2]?.status, "failed");
+    assert.equal(result.nodeResults[2]?.error?.code, "ACTION_TIMEOUT");
+    assert.equal(result.nodeResults[2]?.output, undefined);
+    // ... must not trigger a new checkpoint or further compensation ...
+    assert.equal(updates.length, checkpointsAtTimeout);
+    assert.equal(compensationCalls, 1);
+    assert.equal(result.status, "compensated");
+    assert.equal(result.nodeResults[2]?.compensation, undefined);
+  };
+
+  try {
+    await runScenario("resolve");
+    await runScenario("reject");
+    // Neither the late success nor the late rejection may escape as unhandled.
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+});
+
+test("does not retry a failed task when the node declares a retry policy", async () => {
+  const graph = sagaWorkflow([
+    {
+      nodeId: "task-a",
+      actionId: "transform",
+      retry: { attempts: 3, backoffMs: 10 },
+    },
+  ]);
+  const calls: string[] = [];
+  const updates: Array<{
+    expectedStatus: string;
+    update: Record<string, unknown>;
+  }> = [];
+
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => {
+          calls.push(String(input.taskId));
+          return {
+            ok: false as const,
+            error: { code: "HTTP_503", message: "Upstream unavailable." },
+          };
+        },
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+  );
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.deepEqual(calls, ["task-a"]);
+  assert.equal(result.status, "failed");
+  assert.deepEqual(result.error, {
+    code: "HTTP_503",
+    message: "Upstream unavailable.",
+  });
+
+  // One running update and one terminal failed update: no retry-wait state exists.
+  assert.deepEqual(
+    updates.map((entry) => entry.update.status),
+    ["running", "failed"],
+  );
+
+  const terminal = updates[updates.length - 1];
+  assert.deepEqual(terminal.update.error, {
+    code: "HTTP_503",
+    message: "Upstream unavailable.",
+  });
+  assert.equal(terminal.update.completedAt instanceof Date, true);
+});
+
+test("dispatches each task exactly once per execution when a later task fails", async () => {
+  const graph = sagaWorkflow([
+    { nodeId: "task-a", actionId: "transform" },
+    {
+      nodeId: "task-b",
+      actionId: "transform",
+      retry: { attempts: 2, backoffMs: 5 },
+    },
+  ]);
+  const calls: string[] = [];
+  const updates: Array<{
+    expectedStatus: string;
+    update: Record<string, unknown>;
+  }> = [];
+
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => {
+          const taskId = String(input.taskId);
+          calls.push(taskId);
+          if (taskId === "task-b") {
+            return {
+              ok: false as const,
+              error: { code: "ACTION_FAILED", message: "Downstream failed." },
+            };
+          }
+          return { ok: true as const, output: { taskId } };
+        },
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+  );
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  // Duplicate-dispatch guard: each node is dispatched exactly once.
+  assert.deepEqual(calls, ["task-a", "task-b"]);
+  assert.equal(result.status, "failed");
+  assert.deepEqual(
+    result.nodeResults.map((node: { nodeId: string; status: string }) => [
+      node.nodeId,
+      node.status,
+    ]),
+    [
+      ["trigger-1", "completed"],
+      ["task-a", "completed"],
+      ["task-b", "failed"],
+    ],
   );
 });

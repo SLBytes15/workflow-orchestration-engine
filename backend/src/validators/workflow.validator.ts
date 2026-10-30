@@ -3,6 +3,7 @@ import {
   validateConditionConfigurations,
   type WorkflowGraph,
 } from "./workflow-graph.validator";
+import { validateTriggerConfigurations } from "./event-contract.validator";
 
 export interface CreateWorkflowInput {
   name: string;
@@ -75,6 +76,11 @@ export function validateCreateWorkflow(input: unknown): ValidationResult {
     if (graphErrors.length === 0) {
       errors.push(
         ...validateConditionConfigurations(body.graph).map(
+          (error) => `graph: ${error}`,
+        ),
+      );
+      errors.push(
+        ...validateTriggerConfigurations(body.graph).map(
           (error) => `graph: ${error}`,
         ),
       );
@@ -165,7 +171,21 @@ export function validateUpdateWorkflow(
   if (body.graph !== undefined) {
     const graphErrors = validateWorkflowGraph(body.graph);
     errors.push(...graphErrors.map((error) => `graph: ${error}`));
-    if (graphErrors.length === 0) graph = body.graph as WorkflowGraph;
+    if (graphErrors.length === 0) {
+      errors.push(
+        ...validateConditionConfigurations(body.graph).map(
+          (error) => `graph: ${error}`,
+        ),
+      );
+      errors.push(
+        ...validateTriggerConfigurations(body.graph).map(
+          (error) => `graph: ${error}`,
+        ),
+      );
+      if (errors.length === 0) {
+        graph = body.graph as WorkflowGraph;
+      }
+    }
   }
 
   if (errors.length > 0) {
