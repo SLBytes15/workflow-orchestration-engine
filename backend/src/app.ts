@@ -14,6 +14,7 @@ import { createTenantResolver } from "./services/tenantResolver";
 import { tenantAuthMiddleware } from "./middleware/tenantAuth.middleware";
 import workflowRoutes from "./routes/workflow.routes";
 import executionRoutes from "./routes/execution.routes";
+import executionWsTicketRoutes from "./routes/executionWsTicket.routes";
 
 const app = express();
 const tenantResolver = createTenantResolver();
@@ -88,6 +89,7 @@ app.get("/api/test-authenticated-tenant", requireTenantAuth, (req, res) => {
 
 app.use("/api/workflows", workflowRoutes);
 app.use("/api/workflows", executionRoutes);
+app.use("/api/executions", executionWsTicketRoutes);
 app.use("/api/executions", executionRoutes);
 
 app.use(errorHandler);

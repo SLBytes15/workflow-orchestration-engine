@@ -1,7 +1,9 @@
 import "dotenv/config";
+import type { Server } from "node:http";
 import app from "./app";
 import { connectDatabase } from "./config/database";
 import { createChangeStreamWatcherService } from "./services/changeStreamWatcher.service";
+import { executionEventHub } from "./services/executionWebSocket";
 
 export interface ServerLike {
   close(callback?: (err?: Error) => void): unknown;
@@ -20,6 +22,8 @@ export interface ServerStartupDependencies {
   connectDatabase: () => Promise<void>;
   listen: (port: number, hostname: string, callback?: () => void) => ServerLike;
   createWatcher: () => WatcherServiceLike;
+  /** Attaches live execution updates to the existing HTTP server. */
+  attachWebSocket: (server: ServerLike) => { close(): Promise<void> };
   logger: {
     log: (msg: string, ...args: unknown[]) => void;
     warn: (msg: string, ...args: unknown[]) => void;
@@ -41,6 +45,11 @@ export const defaultDependencies: ServerStartupDependencies = {
   connectDatabase: () => connectDatabase(),
   listen: (port, hostname, callback) => app.listen(port, hostname, callback),
   createWatcher: () => createChangeStreamWatcherService(),
+  attachWebSocket: (server) => {
+    executionEventHub.attach(server as unknown as Server);
+
+    return { close: () => executionEventHub.close() };
+  },
   logger: {
     log: (msg: string, ...args: unknown[]) => console.log(msg, ...args),
     warn: (msg: string, ...args: unknown[]) => console.warn(msg, ...args),
@@ -66,6 +75,7 @@ export async function startServer(
 
   let server: ServerLike | null = null;
   let watcher: WatcherServiceLike | null = null;
+  let webSocketServer: { close(): Promise<void> } | null = null;
   let isShuttingDown = false;
   let sigTermHandler: (() => void) | null = null;
   let sigIntHandler: (() => void) | null = null;
@@ -97,6 +107,22 @@ export async function startServer(
         );
       }
       watcher = null;
+    }
+
+    if (webSocketServer) {
+      try {
+        await webSocketServer.close();
+        logger.log("[SHUTDOWN] WebSocket server closed");
+      } catch (webSocketError) {
+        logger.error(
+          "[SHUTDOWN] Error closing WebSocket server:",
+          webSocketError instanceof Error
+            ? webSocketError.message
+            : webSocketError,
+        );
+        setExitCode(1);
+      }
+      webSocketServer = null;
     }
 
     if (server) {
@@ -139,6 +165,10 @@ export async function startServer(
     setExitCode(1);
   });
 
+  // Same HTTP server and port; the WebSocket path does not open a new listener.
+  webSocketServer = mergedDeps.attachWebSocket(server);
+  logger.log("[STARTUP] Execution WebSocket updates attached");
+
   // 3. Start change stream watcher only after DB connection succeeds
   try {
     watcher = mergedDeps.createWatcher();
@@ -163,6 +193,20 @@ export async function startServer(
         );
       }
       watcher = null;
+    }
+
+    if (webSocketServer) {
+      try {
+        await webSocketServer.close();
+      } catch (webSocketError) {
+        logger.error(
+          "[STARTUP] Error closing WebSocket server during cleanup:",
+          webSocketError instanceof Error
+            ? webSocketError.message
+            : webSocketError,
+        );
+      }
+      webSocketServer = null;
     }
 
     if (server) {
