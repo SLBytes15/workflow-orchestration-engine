@@ -90,6 +90,15 @@ input, are surfaced as errors and are not treated as execution success.
 
 The client URL-encodes workflow and execution IDs before sending requests.
 
+## Execution history behaviour
+
+The Execution History page retrieves saved execution records through the existing REST API client. Requests use the selected workflow ID and the tenant API key in the `X-API-Key` header. History is loaded in cursor-based pages; **Load more** requests the next page, and duplicate execution IDs are not appended.
+
+**Refresh history** reloads the selected workflow's history. Refresh and pagination controls are disabled while a history request is in progress to avoid overlapping requests. Request IDs prevent an older response from replacing data from a newer request.
+
+Loading is announced as a status. A failed history request displays a user-friendly error and a retry action; it is distinct from the empty state, which is shown when the backend successfully returns no records. The page does not fabricate execution records.
+
+Execution history currently uses REST requests. WebSocket-based live execution-history streaming is **not implemented** in this frontend flow.
 ## Stopping the development server
 
 Press `Ctrl + C` in the terminal running `npm run dev`.
