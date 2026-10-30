@@ -1,9 +1,12 @@
 # Week 3 — Retry Policy & Failure Persistence: audit and design proposal
 
 **Author:** Nithin C · **Branch:** `member/nithin` · **Date:** 29 October 2026
+**Updated:** 30 October 2026 — decisions D1 and D3 received; D1 implemented.
 
-**Status:** audit complete; implementation **NOT APPROVED and NOT STARTED**. No production retry
-code, no queue, no worker, no schema change, and no new dependency were added.
+**Status:** audit complete. **D1 (strip + validate) is IMPLEMENTED and tested. D3 keeps
+execution synchronous, so retry execution, backoff and a durable DLQ remain NOT
+IMPLEMENTED.** No retry code, no queue, no worker, no schema change, and no new dependency
+were added. The retry policy and DLQ requirement is still open on architecture, not on code.
 
 ---
 
@@ -66,23 +69,29 @@ database holds no "current step" or "current attempt" for a running execution.
 retry?: { attempts: number; backoffMs: number };
 ```
 
-No code reads it. `parseTaskActionConfig` copies the task config and removes only the two
-compensation keys (`execution.runtime.ts:333-336`):
+No code executes it, and before 30 October it was not validated either.
 
-```ts
-const taskConfig = { ...config };
-delete taskConfig.compensationAction;
-delete taskConfig.compensationConfig;
-```
+**Decision D1 (approved 30 October 2026): strip + validate.** The observed leak is now
+closed:
 
-The result is passed to `action.execute(input)` (`execution.runtime.ts:906-910`), so `retry`
-(and `timeoutMs`) reach registered handlers as ordinary input fields. A declared retry policy
-is therefore inert **and** leaks into handler payloads — a handler that forwards its input
-upstream would transmit `retry` to a third party.
+- `parseTaskActionConfig` validates the shape of `retry` when present — a record whose
+  `attempts` is an integer ≥ 1 and whose `backoffMs` is a finite number ≥ 0 — and fails
+  with `INVALID_RETRY_CONFIG` before any handler is dispatched.
+- `timeoutMs` keeps its existing validation (positive, finite) and is read from the parsed
+  config, not from the handler input.
+- Both fields are deleted from the payload passed to `action.execute(input)` and to the
+  compensation context's `taskConfig`, so a handler that forwards its input can no longer
+  transmit orchestration-only controls downstream.
+- Both stay **inert**: `retry` is never acted on. The attempt cap and backoff policy are
+  deliberately *not* enforced here — an out-of-policy `attempts: 5` is still shape-valid —
+  because those numbers belong to the future implementation, not to today's contract.
 
-The current behaviour is locked in by an existing assertion,
-`execution.runtime.test.ts:206` (`assert.deepEqual(receivedInput, task.data.config)`), so
-changing it is a contract change and requires a decision (see D1).
+Tests: `execution.runtime.test.ts` (payload stripped, timeout still enforced after
+stripping, 13 malformed shapes rejected without dispatch, well-formed shape accepted but
+not executed) and `execution.service.test.ts` (task and compensation payloads carry
+neither field). The assertion that previously locked the leaking payload,
+`assert.deepEqual(receivedInput, task.data.config)`, now compares against the stripped
+config because the test config carries no orchestration fields.
 
 ---
 
@@ -174,18 +183,19 @@ queried separately. An in-memory list is **not** a DLQ and must never be describ
 
 ---
 
-## 7. Decisions needed
+## 7. Decisions
 
-| ID | Decision | Owner |
-|---|---|---|
-| D1 | `retry` field handling: leave inert / reject at validation / strip from handler input / implement. Current behaviour is "inert + leaks into input". | Saransh |
-| D2 | Is the schema change approved (`attempts`, `nextAttemptAt`, `lastErrorCode`, lease fields)? | Saransh / mentor |
-| D3 | Is a queue/worker process approved for Week 3, or does execution stay synchronous? | Saransh / mentor |
-| D4 | Idempotency key contract for side-effecting actions: header name, scope (per node or per attempt), who owns it. | Mentor |
-| D5 | Represent retry waiting as `queued` + `nextAttemptAt`, or add a `retrying` status? | Saransh |
-| D6 | On exhaustion: `failed` + `attempts = N` only, or a separate dead-letter record? Are compensation retries ever allowed? | Saransh / mentor |
+| ID | Decision | Owner | State |
+|---|---|---|---|
+| D1 | `retry` field handling: leave inert / reject at validation / strip from handler input / implement. | Saransh | **DECIDED 30 Oct 2026 — strip + validate, keep inert. DONE.** |
+| D3 | Is a queue/worker process approved for Week 3, or does execution stay synchronous? | Saransh / mentor | **DECIDED 30 Oct 2026 — execution stays synchronous; no worker, no in-request retry sleeps, no queue infrastructure in this task.** |
+| D2 | Is the schema change approved (`attempts`, `nextAttemptAt`, `lastErrorCode`, lease fields)? | Saransh / mentor | Open — only relevant if D3 is revisited |
+| D4 | Idempotency key contract for side-effecting actions: header name, scope (per node or per attempt), who owns it. | Mentor | Open — only relevant if D3 is revisited |
+| D5 | Represent retry waiting as `queued` + `nextAttemptAt`, or add a `retrying` status? | Saransh | Open — only relevant if D3 is revisited |
+| D6 | On exhaustion: `failed` + `attempts = N` only, or a separate dead-letter record? Are compensation retries ever allowed? | Saransh / mentor | Open — only relevant if D3 is revisited |
 
-No implementation begins before D1-D6 are answered in writing.
+D1 has been implemented. D3 fixes the architecture for Week 3, which parks D2, D4, D5 and D6:
+none of them can be acted on while execution stays synchronous.
 
 ---
 
@@ -193,11 +203,13 @@ No implementation begins before D1-D6 are answered in writing.
 
 - **IMPLEMENTED** — terminal failure persistence, optimistic update guard, structured per-node
   errors, wait-timeout with late-settlement handling, Saga compensation with per-node
-  checkpoints, separate compensation error reporting.
+  checkpoints, separate compensation error reporting, retry/timeout shape validation, and
+  stripping of orchestration-only fields from task and compensation payloads.
 - **PROPOSED** — retry classification, attempt/backoff policy, persistence fields, lease and
-  idempotency contract, DLQ representation, decisions D1-D6.
+  idempotency contract, DLQ representation, decisions D2/D4/D5/D6.
 - **NOT IMPLEMENTED** — attempt counting, backoff, retry classification, retry execution,
   durable DLQ, worker/queue, leases, idempotency keys, mid-execution progress persistence.
+  `retry` remains declared, validated and inert; it is never acted on.
 
 ---
 
@@ -214,6 +226,14 @@ Tests added for behaviour that does exist (see `docs/verification/2026-10-29-nit
    no retry-wait state.
 4. Each node is dispatched exactly once per execution when a later node fails
    (duplicate-dispatch guard).
+
+Added with the D1 implementation (`docs/verification/2026-10-30-nithin.md`):
+
+5. Malformed `retry` shapes are rejected before dispatch and the handler is never called.
+6. A well-formed `retry` is accepted and still dispatched exactly once.
+7. `retry` and `timeoutMs` are absent from the handler payload, while `timeoutMs` still
+   ends the wait.
+8. The same two fields are absent from the compensation context's `taskConfig`.
 
 ---
 

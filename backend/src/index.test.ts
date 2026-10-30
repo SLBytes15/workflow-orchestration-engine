@@ -348,5 +348,69 @@ describe("Server Startup & Watcher Initialization", () => {
     assert.equal(fakeServer.closeCalls, 1);
     assert.equal(exitCode, null);
   });
+
+  it("attaches execution updates after listen and closes them during shutdown", async () => {
+    const callOrder: string[] = [];
+    const fakeServer = new FakeServer();
+    const fakeWatcher = new FakeWatcher();
+    let attachedTo: ServerLike | null = null;
+    let webSocketCloseCalls = 0;
+    let exitCode: number | null = null;
+    const { logger } = createTestLogger();
+
+    const noopClose = async () => {
+      webSocketCloseCalls += 1;
+      callOrder.push("webSocket.close");
+    };
+
+    const result = await startServer({
+      port: 8080,
+      connectDatabase: async () => {
+        callOrder.push("connectDatabase");
+      },
+      listen: (_port, _hostname, cb) => {
+        callOrder.push("listen");
+        if (cb) cb();
+        return fakeServer;
+      },
+      createWatcher: () => {
+        callOrder.push("createWatcher");
+        return fakeWatcher;
+      },
+      attachWebSocket: (server) => {
+        attachedTo = server;
+        callOrder.push("attachWebSocket");
+        return { close: noopClose };
+      },
+      logger,
+      setExitCode: (code) => {
+        exitCode = code;
+      },
+      registerSignalHandlers: false,
+    });
+
+    assert.deepEqual(callOrder, [
+      "connectDatabase",
+      "listen",
+      "attachWebSocket",
+      "createWatcher",
+    ]);
+    assert.equal(attachedTo, fakeServer);
+    assert.equal(webSocketCloseCalls, 0);
+
+    const originalClose = fakeServer.close.bind(fakeServer);
+    fakeServer.close = (callback?: (err?: Error) => void) => {
+      callOrder.push("server.close");
+      return originalClose(callback);
+    };
+
+    await result.shutdown("SIGTERM");
+
+    // WebSocket resources are released before the HTTP listener is closed.
+    assert.deepEqual(callOrder.slice(-2), ["webSocket.close", "server.close"]);
+    assert.equal(webSocketCloseCalls, 1);
+    assert.equal(fakeServer.closeCalls, 1);
+    assert.equal(exitCode, null);
+  });
 });
 
