@@ -520,6 +520,7 @@ interface SagaTask {
   actionId: string;
   compensationActionId?: string;
   timeoutMs?: number;
+  retry?: { attempts: number; backoffMs: number };
 }
 
 function sagaWorkflow(tasks: SagaTask[]) {
@@ -549,6 +550,7 @@ function sagaWorkflow(tasks: SagaTask[]) {
               }
             : {}),
         },
+        ...(task.retry ? { retry: task.retry } : {}),
       },
     })),
   ];
@@ -1721,4 +1723,112 @@ test("keeps the recorded timeout failure when the handler settles late", async (
   } finally {
     process.off("unhandledRejection", onUnhandled);
   }
+});
+
+test("does not retry a failed task when the node declares a retry policy", async () => {
+  const graph = sagaWorkflow([
+    {
+      nodeId: "task-a",
+      actionId: "transform",
+      retry: { attempts: 3, backoffMs: 10 },
+    },
+  ]);
+  const calls: string[] = [];
+  const updates: Array<{
+    expectedStatus: string;
+    update: Record<string, unknown>;
+  }> = [];
+
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => {
+          calls.push(String(input.taskId));
+          return {
+            ok: false as const,
+            error: { code: "HTTP_503", message: "Upstream unavailable." },
+          };
+        },
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+  );
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.deepEqual(calls, ["task-a"]);
+  assert.equal(result.status, "failed");
+  assert.deepEqual(result.error, {
+    code: "HTTP_503",
+    message: "Upstream unavailable.",
+  });
+
+  // One running update and one terminal failed update: no retry-wait state exists.
+  assert.deepEqual(
+    updates.map((entry) => entry.update.status),
+    ["running", "failed"],
+  );
+
+  const terminal = updates[updates.length - 1];
+  assert.deepEqual(terminal.update.error, {
+    code: "HTTP_503",
+    message: "Upstream unavailable.",
+  });
+  assert.equal(terminal.update.completedAt instanceof Date, true);
+});
+
+test("dispatches each task exactly once per execution when a later task fails", async () => {
+  const graph = sagaWorkflow([
+    { nodeId: "task-a", actionId: "transform" },
+    {
+      nodeId: "task-b",
+      actionId: "transform",
+      retry: { attempts: 2, backoffMs: 5 },
+    },
+  ]);
+  const calls: string[] = [];
+  const updates: Array<{
+    expectedStatus: string;
+    update: Record<string, unknown>;
+  }> = [];
+
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => {
+          const taskId = String(input.taskId);
+          calls.push(taskId);
+          if (taskId === "task-b") {
+            return {
+              ok: false as const,
+              error: { code: "ACTION_FAILED", message: "Downstream failed." },
+            };
+          }
+          return { ok: true as const, output: { taskId } };
+        },
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+  );
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  // Duplicate-dispatch guard: each node is dispatched exactly once.
+  assert.deepEqual(calls, ["task-a", "task-b"]);
+  assert.equal(result.status, "failed");
+  assert.deepEqual(
+    result.nodeResults.map((node: { nodeId: string; status: string }) => [
+      node.nodeId,
+      node.status,
+    ]),
+    [
+      ["trigger-1", "completed"],
+      ["task-a", "completed"],
+      ["task-b", "failed"],
+    ],
+  );
 });
