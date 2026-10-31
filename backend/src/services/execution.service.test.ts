@@ -520,6 +520,7 @@ interface SagaTask {
   actionId: string;
   compensationActionId?: string;
   timeoutMs?: number;
+  retry?: { attempts: number; backoffMs: number };
 }
 
 function sagaWorkflow(tasks: SagaTask[]) {
@@ -549,6 +550,7 @@ function sagaWorkflow(tasks: SagaTask[]) {
               }
             : {}),
         },
+        ...(task.retry ? { retry: task.retry } : {}),
       },
     })),
   ];
@@ -1721,4 +1723,365 @@ test("keeps the recorded timeout failure when the handler settles late", async (
   } finally {
     process.off("unhandledRejection", onUnhandled);
   }
+});
+
+test("does not retry a failed task when the node declares a retry policy", async () => {
+  const graph = sagaWorkflow([
+    {
+      nodeId: "task-a",
+      actionId: "transform",
+      retry: { attempts: 3, backoffMs: 10 },
+    },
+  ]);
+  const calls: string[] = [];
+  const updates: Array<{
+    expectedStatus: string;
+    update: Record<string, unknown>;
+  }> = [];
+
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => {
+          calls.push(String(input.taskId));
+          return {
+            ok: false as const,
+            error: { code: "HTTP_503", message: "Upstream unavailable." },
+          };
+        },
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+  );
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.deepEqual(calls, ["task-a"]);
+  assert.equal(result.status, "failed");
+  assert.deepEqual(result.error, {
+    code: "HTTP_503",
+    message: "Upstream unavailable.",
+  });
+
+  // One running update and one terminal failed update: no retry-wait state exists.
+  assert.deepEqual(
+    updates.map((entry) => entry.update.status),
+    ["running", "failed"],
+  );
+
+  const terminal = updates[updates.length - 1];
+  assert.deepEqual(terminal.update.error, {
+    code: "HTTP_503",
+    message: "Upstream unavailable.",
+  });
+  assert.equal(terminal.update.completedAt instanceof Date, true);
+});
+
+test("dispatches each task exactly once per execution when a later task fails", async () => {
+  const graph = sagaWorkflow([
+    { nodeId: "task-a", actionId: "transform" },
+    {
+      nodeId: "task-b",
+      actionId: "transform",
+      retry: { attempts: 2, backoffMs: 5 },
+    },
+  ]);
+  const calls: string[] = [];
+  const updates: Array<{
+    expectedStatus: string;
+    update: Record<string, unknown>;
+  }> = [];
+
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => {
+          const taskId = String(input.taskId);
+          calls.push(taskId);
+          if (taskId === "task-b") {
+            return {
+              ok: false as const,
+              error: { code: "ACTION_FAILED", message: "Downstream failed." },
+            };
+          }
+          return { ok: true as const, output: { taskId } };
+        },
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+  );
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  // Duplicate-dispatch guard: each node is dispatched exactly once.
+  assert.deepEqual(calls, ["task-a", "task-b"]);
+  assert.equal(result.status, "failed");
+  assert.deepEqual(
+    result.nodeResults.map((node: { nodeId: string; status: string }) => [
+      node.nodeId,
+      node.status,
+    ]),
+    [
+      ["trigger-1", "completed"],
+      ["task-a", "completed"],
+      ["task-b", "failed"],
+    ],
+  );
+});
+
+test("notifies each persisted state only after the write succeeded", async () => {
+  const graph = sagaWorkflow([{ nodeId: "task-a", actionId: "transform" }]);
+  const updates: Array<{ expectedStatus: string; update: Record<string, unknown> }> = [];
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => ({
+          ok: true as const,
+          output: { taskId: String(input.taskId) },
+        }),
+      },
+    },
+  };
+  const notifications: Array<{ status: string; persistedWrites: number }> = [];
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+    actions,
+    (execution) => {
+      notifications.push({
+        status: execution.status,
+        persistedWrites: updates.length,
+      });
+    },
+  );
+
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(
+    updates.map((entry) => entry.update.status),
+    ["running", "completed"],
+  );
+  // The notification for a state is emitted after that state was written.
+  assert.deepEqual(notifications, [
+    { status: "running", persistedWrites: 1 },
+    { status: "completed", persistedWrites: 2 },
+  ]);
+});
+
+test("publishes the persisted failed status for a terminal failure", async () => {
+  const invalidWorkflow = {
+    ...workflow,
+    graph: { version: 1 as const, nodes: [], edges: [] },
+  };
+  const updates: Array<Record<string, unknown>> = [];
+  const notifications: Array<{ status: string; persistedWrites: number }> = [];
+
+  const service = createExecutionService(
+    makeDependencies({
+      findWorkflow: async () => invalidWorkflow,
+      updateExecution: async (
+        _tenant,
+        _id,
+        _expectedStatus,
+        _expectedResults,
+        update,
+      ) => {
+        updates.push(update as Record<string, unknown>);
+
+        return {
+          _id: executionId,
+          tenantId,
+          workflowId,
+          workflowVersion: 3,
+          graphSnapshot: invalidWorkflow.graph,
+          ...update,
+        };
+      },
+    }),
+    undefined,
+    (execution) => {
+      notifications.push({
+        status: execution.status,
+        persistedWrites: updates.length,
+      });
+    },
+  );
+
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.equal(result.status, "failed");
+  assert.deepEqual(notifications, [
+    { status: "running", persistedWrites: 1 },
+    { status: "failed", persistedWrites: 2 },
+  ]);
+});
+
+test("does not notify a terminal state when the terminal write is unconfirmed", async () => {
+  const graph = sagaWorkflow([{ nodeId: "task-a", actionId: "transform" }]);
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async () => ({ ok: true as const }),
+      },
+    },
+  };
+  let writes = 0;
+  const notifications: string[] = [];
+
+  const service = createExecutionService(
+    makeDependencies({
+      findWorkflow: async () => graph,
+      actions,
+      updateExecution: async (
+        _tenant,
+        _id,
+        _expectedStatus,
+        _expectedResults,
+        update,
+      ) => {
+        writes += 1;
+
+        // The running transition persists; the terminal write matches no record.
+        if (writes > 1) {
+          return null;
+        }
+
+        return {
+          _id: executionId,
+          tenantId,
+          workflowId,
+          workflowVersion: 3,
+          graphSnapshot: graph.graph,
+          ...update,
+        };
+      },
+    }),
+    actions,
+    (execution) => {
+      notifications.push(execution.status);
+    },
+  );
+
+  await assert.rejects(
+    () => service.startExecution(tenantId, String(workflowId)),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.code === "EXECUTION_RESULT_PERSISTENCE_FAILED",
+  );
+
+  // No terminal notification may be published for an unconfirmed terminal state.
+  assert.deepEqual(notifications, ["running"]);
+});
+
+test("keeps the execution outcome when the notifier throws", async () => {
+  const graph = sagaWorkflow([{ nodeId: "task-a", actionId: "transform" }]);
+  const updates: Array<{ expectedStatus: string; update: Record<string, unknown> }> = [];
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async () => ({ ok: true as const }),
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+    actions,
+    () => {
+      throw new Error("notification transport down");
+    },
+  );
+
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.equal(result.status, "completed");
+  assert.equal(updates.length, 2);
+});
+
+test("keeps retry and timeoutMs out of task and compensation payloads", async () => {
+  const graph = sagaWorkflow([
+    {
+      nodeId: "task-a",
+      actionId: "transform",
+      compensationActionId: "undo",
+      retry: { attempts: 3, backoffMs: 10 },
+      timeoutMs: 10_000,
+    },
+    {
+      nodeId: "task-b",
+      actionId: "transform",
+      retry: { attempts: 2, backoffMs: 5 },
+      timeoutMs: 10_000,
+    },
+  ]);
+  const taskInputs: Record<string, ValidatedActionInput> = {};
+  const compensationInputs: Record<string, ValidatedActionInput> = {};
+  const updates: Array<{ expectedStatus: string; update: Record<string, unknown> }> = [];
+
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => {
+          const taskId = String(input.taskId);
+          taskInputs[taskId] = input;
+
+          if (taskId === "task-b") {
+            return {
+              ok: false as const,
+              error: { code: "DOWNSTREAM_FAILED", message: "Downstream failed." },
+            };
+          }
+
+          return { ok: true as const, output: { taskId } };
+        },
+      },
+    },
+    compensationActions: {
+      undo: {
+        execute: async (context) => {
+          compensationInputs[context.nodeId] = context.taskConfig;
+          return { ok: true as const };
+        },
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+  );
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.equal(result.status, "compensated");
+
+  // Neither payload may carry orchestration-only controls.
+  for (const payload of Object.values(taskInputs)) {
+    assert.equal("retry" in payload, false);
+    assert.equal("timeoutMs" in payload, false);
+  }
+  for (const payload of Object.values(compensationInputs)) {
+    assert.equal("retry" in payload, false);
+    assert.equal("timeoutMs" in payload, false);
+  }
+
+  assert.deepEqual(taskInputs["task-a"], {
+    action: "transform",
+    expression: "task-a",
+    taskId: "task-a",
+  });
+  assert.deepEqual(compensationInputs["task-a"], {
+    action: "transform",
+    expression: "task-a",
+    taskId: "task-a",
+  });
+
+  // Compensation still drives the persisted lifecycle; the payload change did
+  // not alter it.
+  assert.equal(updates[0].update.status, "running");
+  assert.equal(updates[updates.length - 1].update.status, "compensated");
+  assert.ok(updates.some((entry) => entry.update.status === "compensating"));
 });

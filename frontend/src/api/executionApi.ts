@@ -1,7 +1,74 @@
 const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:3000"
+  (import.meta as ImportMeta & { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL || "http://localhost:3000"
 ).replace(/\/+$/, "");
 
+
+export type ExecutionWebSocketTicket = {
+  ticket: string;
+  expiresAt: string;
+};
+
+export async function createExecutionWsTicket(
+  apiKey: string,
+): Promise<ExecutionWebSocketTicket> {
+  if (!apiKey.trim()) {
+    throw new Error("API authentication is not configured.");
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/executions/ws-ticket`,
+    {
+      method: "POST",
+      headers: {
+        "X-API-Key": apiKey,
+      },
+    },
+  );
+
+  const body: unknown = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const payload = body as {
+      error?: { message?: string };
+    } | null;
+
+    throw new Error(
+      payload?.error?.message ||
+        `WebSocket ticket request failed (HTTP ${response.status}).`,
+    );
+  }
+
+  const payload = body as {
+    ticket?: unknown;
+    expiresAt?: unknown;
+  } | null;
+
+  if (
+    typeof payload?.ticket !== "string" ||
+    !payload.ticket.trim() ||
+    typeof payload.expiresAt !== "string" ||
+    Number.isNaN(Date.parse(payload.expiresAt)) ||
+    Date.parse(payload.expiresAt) <= Date.now()
+  ) {
+    throw new Error("The API returned an invalid WebSocket ticket.");
+  }
+
+  return {
+    ticket: payload.ticket,
+    expiresAt: payload.expiresAt,
+  };
+}
+
+export function getExecutionWebSocketUrl(ticket: string): string {
+  const url = new URL(API_BASE_URL);
+
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = "/ws/executions";
+  url.search = "";
+  url.searchParams.set("ticket", ticket);
+
+  return url.toString();
+}
 export type ExecutionStatus =
   | "queued"
   | "running"
@@ -48,6 +115,7 @@ export type WorkflowExecution = {
   error?: ExecutionError | string | null;
   startedAt?: string | null;
   completedAt?: string | null;
+  updatedAt?: string;
   createdAt?: string;
 };
 

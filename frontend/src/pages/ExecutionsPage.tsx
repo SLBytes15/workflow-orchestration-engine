@@ -5,7 +5,7 @@ import {
   getWorkflowExecutions,
   type WorkflowExecution,
 } from '../api/executionApi'
-import { getErrorText, sanitizeErrorMessage } from '../executionHelpers'
+import { connectExecutionUpdates } from '../api/executionRealtime'
 import './ExecutionsPage.css'
 
 type SavedWorkflow = {
@@ -212,11 +212,11 @@ function ExecutionsPage({
 
         setNextCursor(result.pagination.nextCursor)
         setHasMore(result.pagination.hasMore)
-      } catch (error) {
+      } catch {
         if (requestId !== historyRequestId.current) return
 
         setHistoryError(
-          getRequestError(error, 'Unable to load execution history.'),
+          'Unable to load execution history. Check your connection and try again.',
         )
       } finally {
         if (requestId === historyRequestId.current) {
@@ -236,6 +236,60 @@ function ExecutionsPage({
     }
   }, [loadHistory, refreshToken])
 
+  useEffect(() => {
+    if (!tenantApiKey?.trim() || !selectedWorkflowId) {
+      return
+    }
+
+    return connectExecutionUpdates({
+      apiKey: tenantApiKey,
+
+      onEvent: (event) => {
+        if (event.data.workflowId !== selectedWorkflowId) {
+          return
+        }
+
+        setExecutions((current) =>
+          current.map((execution) => {
+            const id = execution.id ?? execution._id
+
+            if (id !== event.data.executionId) {
+              return execution
+            }
+
+            return {
+              ...execution,
+              status: event.data.status,
+              updatedAt: event.data.updatedAt,
+            }
+          }),
+        )
+
+        setDetails((current) => {
+          const id = current?.id ?? current?._id
+
+          if (
+            !current ||
+            id !== event.data.executionId ||
+            current.workflowId !== event.data.workflowId
+          ) {
+            return current
+          }
+
+          return {
+            ...current,
+            status: event.data.status,
+            updatedAt: event.data.updatedAt,
+          }
+        })
+      },
+
+      onReconnect: () => {
+        // REST remains the source of truth after missed WebSocket events.
+        void loadHistory(false)
+      },
+    })
+  }, [tenantApiKey, selectedWorkflowId, loadHistory])
   async function showDetails(execution: WorkflowExecution) {
     const requestId = ++detailsRequestId.current
     const id = execution.id ?? execution._id
@@ -287,6 +341,7 @@ function ExecutionsPage({
           onClick={() => setRefreshToken((value) => value + 1)}
           disabled={
             loadingHistory ||
+            loadingMore ||
             loadingWorkflows ||
             !selectedWorkflowId
           }
@@ -352,7 +407,7 @@ function ExecutionsPage({
         )}
 
       {selectedWorkflowId && (
-        <section aria-labelledby="execution-history-heading">
+        <section aria-labelledby="execution-history-heading" aria-busy={loadingHistory || loadingMore}>
           <div className="executions-page__section-heading">
             <h2 id="execution-history-heading">
               Execution history
@@ -362,14 +417,21 @@ function ExecutionsPage({
 
           {loadingHistory && (
             <p role="status" aria-live="polite">
-              Loading execution history…
+              Loading execution history...
             </p>
           )}
 
           {historyError && (
-            <p className="executions-page__error" role="alert">
-              {historyError}
-            </p>
+            <div className="executions-page__error-state" role="alert">
+              <p>{historyError}</p>
+              <button
+                type="button"
+                onClick={() => setRefreshToken((value) => value + 1)}
+                disabled={loadingHistory || loadingMore}
+              >
+                Retry loading history
+              </button>
+            </div>
           )}
 
           {!loadingHistory &&
@@ -476,7 +538,7 @@ function ExecutionsPage({
                     >
                       {detailsLoadingId ===
                       (execution.id ?? execution._id)
-                        ? 'Loading details…'
+                        ? 'Loading detailsâ€¦'
                         : 'View details'}
                     </button>
                   </article>
@@ -496,7 +558,7 @@ function ExecutionsPage({
                 !nextCursor
               }
             >
-              {loadingMore ? 'Loading…' : 'Load more'}
+              {loadingMore ? 'Loading more executionsâ€¦' : 'Load more'}
             </button>
           )}
         </section>
