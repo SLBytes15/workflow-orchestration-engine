@@ -21,9 +21,42 @@ import {
 import { validateTriggerConfigurations } from "../validators/event-contract.validator";
 
 
+export type WorkflowRouterService =
+  | ReturnType<typeof createWorkflowService>
+  | {
+      createWorkflow: (command: any) => Promise<unknown>;
+      listWorkflows: (tenantId: Types.ObjectId) => Promise<unknown[]>;
+      getWorkflowById?: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+      ) => Promise<unknown | null>;
+      updateWorkflow: (command: any) => Promise<unknown | null>;
+      updateWorkflowGraph: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+        graph: any,
+      ) => Promise<unknown | null>;
+      deleteWorkflow: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+      ) => Promise<unknown | null>;
+      activateWorkflow: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+      ) => Promise<any>;
+      pauseWorkflow: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+      ) => Promise<any>;
+      resumeWorkflow: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+      ) => Promise<any>;
+    };
+
 export function createWorkflowRouter(
   resolver: TenantResolver = createTenantResolver(),
-  service = createWorkflowService(),
+  service: WorkflowRouterService = createWorkflowService(),
 ) {
   const router = Router();
   const requireTenantAuth = tenantAuthMiddleware(resolver);
@@ -289,6 +322,65 @@ export function createWorkflowRouter(
       res.status(200).json({
         message: "Workflows retrieved successfully",
         workflows,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/:workflowId", requireTenantAuth, async (req, res, next) => {
+    try {
+      const tenantContext = req.tenantContext;
+
+      if (!tenantContext) {
+        res.status(401).json({
+          error: {
+            code: "UNAUTHORIZED",
+            message: "A valid API key is required",
+          },
+        });
+        return;
+      }
+
+      const workflowId = String(req.params.workflowId);
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        res.status(400).json({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "workflowId must be a valid ID",
+          },
+        });
+        return;
+      }
+
+      if (!service.getWorkflowById) {
+        res.status(500).json({
+          error: {
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Workflow lookup not supported",
+          },
+        });
+        return;
+      }
+
+      const workflow = await service.getWorkflowById(
+        tenantContext.tenantId,
+        workflowId,
+      );
+
+      if (!workflow) {
+        res.status(404).json({
+          error: {
+            code: "WORKFLOW_NOT_FOUND",
+            message: "Workflow not found",
+          },
+        });
+        return;
+      }
+
+      res.status(200).json({
+        message: "Workflow retrieved successfully",
+        workflow,
       });
     } catch (error) {
       next(error);
