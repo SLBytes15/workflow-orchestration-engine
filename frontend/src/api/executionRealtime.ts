@@ -159,7 +159,7 @@ export function connectExecutionUpdates(
       socket = currentSocket;
 
       currentSocket.onopen = () => {
-        if (stopped) return;
+        if (stopped || socket !== currentSocket) return;
 
         const isReconnect = connectedBefore;
         connectedBefore = true;
@@ -171,6 +171,8 @@ export function connectExecutionUpdates(
       };
 
       currentSocket.onmessage = (message) => {
+        if (stopped || socket !== currentSocket) return;
+
         const event = parseExecutionUpdateEvent(message.data);
 
         if (event) {
@@ -179,14 +181,15 @@ export function connectExecutionUpdates(
       };
 
       currentSocket.onclose = () => {
-        if (socket === currentSocket) {
-          socket = null;
-        }
+        if (stopped || socket !== currentSocket) return;
 
+        socket = null;
         scheduleReconnect();
       };
 
       currentSocket.onerror = () => {
+        if (stopped || socket !== currentSocket) return;
+
         currentSocket.close();
       };
     } catch {
