@@ -27,6 +27,10 @@ const deleteWorkflowCalls: Array<{
   tenantId: Types.ObjectId;
   workflowId: string;
 }> = [];
+const activateWorkflowCalls: Array<{
+  tenantId: Types.ObjectId;
+  workflowId: string;
+}> = [];
 
 const resolver: TenantResolver = {
   async resolverTenant(apiKey: string) {
@@ -119,6 +123,89 @@ const service = {
     }
 
     return { ...createdWorkflow, tenantId: requestedTenantId };
+  },
+
+  async activateWorkflow(
+    requestedTenantId: Types.ObjectId,
+    workflowId: string,
+  ) {
+    activateWorkflowCalls.push({
+      tenantId: requestedTenantId,
+      workflowId,
+    });
+    if (workflowId === "6ad9a2f75b4a085ee3c2c262") {
+      throw new Error("Simulated activation failure");
+    }
+    if (
+      !requestedTenantId.equals(tenantId) ||
+      workflowId === "6ad9a2f75b4a085ee3c2c260"
+    ) {
+      return { outcome: "not_found" as const };
+    }
+    if (workflowId === "6ad9a2f75b4a085ee3c2c261") {
+      return { outcome: "invalid_status" as const, currentStatus: "paused" };
+    }
+    if (workflowId === "6ad9a2f75b4a085ee3c2c263") {
+      return {
+        outcome: "invalid_graph" as const,
+        errors: ["Graph version must be 1"],
+      };
+    }
+    return {
+      outcome: "success" as const,
+      workflow: {
+        ...createdWorkflow,
+        _id: workflowId,
+        tenantId: requestedTenantId,
+        status: "active" as const,
+      },
+    };
+  },
+  pauseWorkflow: async (requestedTenantId: Types.ObjectId, workflowId: string) => {
+    if (
+      !requestedTenantId.equals(tenantId) ||
+      workflowId === "6ad9a2f75b4a085ee3c2c260"
+    ) {
+      return { outcome: "not_found" as const };
+    }
+    if (workflowId === "6ad9a2f75b4a085ee3c2c264") {
+      return { outcome: "invalid_status" as const, currentStatus: "draft" };
+    }
+    return {
+      outcome: "success" as const,
+      workflow: {
+        ...createdWorkflow,
+        _id: workflowId,
+        tenantId: requestedTenantId,
+        status: "paused" as const,
+      },
+    };
+  },
+  resumeWorkflow: async (requestedTenantId: Types.ObjectId, workflowId: string) => {
+    if (
+      !requestedTenantId.equals(tenantId) ||
+      workflowId === "6ad9a2f75b4a085ee3c2c260"
+    ) {
+      return { outcome: "not_found" as const };
+    }
+    if (workflowId === "6ad9a2f75b4a085ee3c2c264") {
+      return { outcome: "invalid_status" as const, currentStatus: "draft" };
+    }
+    if (workflowId === "6ad9a2f75b4a085ee3c2c263") {
+      return {
+        outcome: "invalid_graph" as const,
+        errors: ["Graph version must be 1"],
+      };
+    }
+    return {
+      outcome: "success" as const,
+      workflow: {
+        ...createdWorkflow,
+        _id: workflowId,
+        tenantId: requestedTenantId,
+        status: "active" as const,
+      },
+    };
   },
 };
 
@@ -453,4 +540,284 @@ test("rejects syntactically malformed JSON without exposing parser details", asy
   assert.equal(body.error?.code, "INVALID_JSON");
   assert.equal(body.error?.message, "Request body must be valid JSON.");
   assert.equal(graphUpdateCalls.length, callsBefore);
+});
+
+test("requires tenant authentication before activating a workflow", async () => {
+  const response = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269/activate`,
+    { method: "POST" },
+  );
+  assert.equal(response.status, 401);
+  const body = (await response.json()) as { error?: { code?: string } };
+  assert.equal(body.error?.code, "UNAUTHORIZED");
+});
+
+test("rejects an unresolved API key when activating a workflow", async () => {
+  const response = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269/activate`,
+    {
+      method: "POST",
+      headers: { "x-api-key": "invalid-test-key" },
+    },
+  );
+  assert.equal(response.status, 401);
+  const body = (await response.json()) as { error?: { code?: string } };
+  assert.equal(body.error?.code, "UNAUTHORIZED");
+});
+
+test("activates a draft workflow using authenticated tenant context", async () => {
+  const callsBefore = activateWorkflowCalls.length;
+  const workflowId = "6ad9a2f75b4a085ee3c2c269";
+
+  const response = await fetch(`${baseUrl}/${workflowId}/activate`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    message: string;
+    workflow: { _id: string; status: string; tenantId: string };
+  };
+  assert.equal(body.message, "Workflow activated successfully");
+  assert.equal(body.workflow._id, workflowId);
+  assert.equal(body.workflow.status, "active");
+  assert.equal(activateWorkflowCalls.length, callsBefore + 1);
+  assert.equal(
+    activateWorkflowCalls.at(-1)?.tenantId.toString(),
+    tenantId.toString(),
+  );
+  assert.equal(activateWorkflowCalls.at(-1)?.workflowId, workflowId);
+});
+
+test("repeated activation returns consistent success contract with active status", async () => {
+  const workflowId = "6ad9a2f75b4a085ee3c2c269";
+
+  const first = await fetch(`${baseUrl}/${workflowId}/activate`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+  const second = await fetch(`${baseUrl}/${workflowId}/activate`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  const body1 = (await first.json()) as { message: string; workflow: { status: string } };
+  const body2 = (await second.json()) as { message: string; workflow: { status: string } };
+
+  assert.equal(body1.message, "Workflow activated successfully");
+  assert.equal(body1.workflow.status, "active");
+  assert.equal(body2.message, "Workflow activated successfully");
+  assert.equal(body2.workflow.status, "active");
+});
+
+test("rejects malformed workflow IDs when activating", async () => {
+  const callsBefore = activateWorkflowCalls.length;
+  const response = await fetch(`${baseUrl}/invalid-id/activate`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(response.status, 400);
+  const body = (await response.json()) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.equal(body.error?.code, "VALIDATION_ERROR");
+  assert.equal(body.error?.message, "workflowId must be a valid ID");
+  assert.equal(activateWorkflowCalls.length, callsBefore);
+});
+
+test("returns not found for missing or other-tenant workflows on activation", async () => {
+  const callsBefore = activateWorkflowCalls.length;
+
+  const missingResponse = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c260/activate`,
+    {
+      method: "POST",
+      headers: { "x-api-key": "valid-test-key" },
+    },
+  );
+  assert.equal(missingResponse.status, 404);
+  const missingBody = (await missingResponse.json()) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.deepEqual(missingBody.error, {
+    code: "WORKFLOW_NOT_FOUND",
+    message: "Workflow not found",
+  });
+
+  const otherTenantResponse = await fetch(
+    `${baseUrl}/6ad9a2f75b4a085ee3c2c269/activate`,
+    {
+      method: "POST",
+      headers: { "x-api-key": "other-test-key" },
+    },
+  );
+  assert.equal(otherTenantResponse.status, 404);
+  const otherTenantBody = (await otherTenantResponse.json()) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.deepEqual(otherTenantBody.error, {
+    code: "WORKFLOW_NOT_FOUND",
+    message: "Workflow not found",
+  });
+
+  assert.equal(activateWorkflowCalls.length, callsBefore + 2);
+});
+
+test("returns 400 when attempting to activate a paused workflow", async () => {
+  const pausedWorkflowId = "6ad9a2f75b4a085ee3c2c261";
+
+  const response = await fetch(`${baseUrl}/${pausedWorkflowId}/activate`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(response.status, 400);
+  const body = (await response.json()) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.deepEqual(body.error, {
+    code: "INVALID_WORKFLOW_STATUS",
+    message: "Only draft workflows can be activated",
+  });
+});
+
+test("returns 400 when attempting to activate a workflow with an invalid graph", async () => {
+  const invalidGraphWorkflowId = "6ad9a2f75b4a085ee3c2c263";
+
+  const response = await fetch(`${baseUrl}/${invalidGraphWorkflowId}/activate`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(response.status, 400);
+  const body = (await response.json()) as {
+    error?: { code?: string; message?: string; details?: string[] };
+  };
+  assert.deepEqual(body.error, {
+    code: "INVALID_WORKFLOW_GRAPH",
+    message: "The workflow graph is invalid and cannot be activated",
+    details: ["Graph version must be 1"],
+  });
+});
+
+test("forwards unexpected activation service errors to error handling", async () => {
+  const errorWorkflowId = "6ad9a2f75b4a085ee3c2c262";
+
+  const response = await fetch(`${baseUrl}/${errorWorkflowId}/activate`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(response.status, 500);
+  const body = (await response.json()) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.equal(body.error?.code, "INTERNAL_SERVER_ERROR");
+});
+
+test("pauses an active workflow successfully", async () => {
+  const activeWorkflowId = "6ad9a2f75b4a085ee3c2c265";
+
+  const response = await fetch(`${baseUrl}/${activeWorkflowId}/pause`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    message: string;
+    workflow: { _id: string; status: string; tenantId: string };
+  };
+  assert.equal(body.message, "Workflow paused successfully");
+  assert.equal(body.workflow.status, "paused");
+});
+
+test("rejects pausing a draft workflow with 400", async () => {
+  const draftWorkflowId = "6ad9a2f75b4a085ee3c2c264";
+
+  const response = await fetch(`${baseUrl}/${draftWorkflowId}/pause`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(response.status, 400);
+  const body = (await response.json()) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.deepEqual(body.error, {
+    code: "INVALID_WORKFLOW_STATUS",
+    message: "Only active workflows can be paused",
+  });
+});
+
+test("resumes a paused workflow successfully", async () => {
+  const pausedWorkflowId = "6ad9a2f75b4a085ee3c2c261";
+
+  const response = await fetch(`${baseUrl}/${pausedWorkflowId}/resume`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    message: string;
+    workflow: { _id: string; status: string; tenantId: string };
+  };
+  assert.equal(body.message, "Workflow resumed successfully");
+  assert.equal(body.workflow.status, "active");
+});
+
+test("rejects resuming a draft workflow with 400", async () => {
+  const draftWorkflowId = "6ad9a2f75b4a085ee3c2c264";
+
+  const response = await fetch(`${baseUrl}/${draftWorkflowId}/resume`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(response.status, 400);
+  const body = (await response.json()) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.deepEqual(body.error, {
+    code: "INVALID_WORKFLOW_STATUS",
+    message: "Only paused workflows can be resumed",
+  });
+});
+
+test("rejects resuming a workflow with an invalid graph with 400", async () => {
+  const invalidGraphWorkflowId = "6ad9a2f75b4a085ee3c2c263";
+
+  const response = await fetch(`${baseUrl}/${invalidGraphWorkflowId}/resume`, {
+    method: "POST",
+    headers: { "x-api-key": "valid-test-key" },
+  });
+
+  assert.equal(response.status, 400);
+  const body = (await response.json()) as {
+    error?: { code?: string; message?: string; details?: string[] };
+  };
+  assert.deepEqual(body.error, {
+    code: "INVALID_WORKFLOW_GRAPH",
+    message: "The workflow graph is invalid and cannot be resumed",
+    details: ["Graph version must be 1"],
+  });
+});
+
+test("requires authentication when pausing or resuming a workflow", async () => {
+  const workflowId = "6ad9a2f75b4a085ee3c2c265";
+
+  const pauseRes = await fetch(`${baseUrl}/${workflowId}/pause`, {
+    method: "POST",
+  });
+  assert.equal(pauseRes.status, 401);
+
+  const resumeRes = await fetch(`${baseUrl}/${workflowId}/resume`, {
+    method: "POST",
+  });
+  assert.equal(resumeRes.status, 401);
 });

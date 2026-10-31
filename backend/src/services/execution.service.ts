@@ -8,6 +8,11 @@ import {
   type RuntimeExecutionCheckpoint,
   type RuntimeExecutionResult,
 } from "./execution.runtime";
+import {
+  executionEventHub,
+  publishPersistedExecution,
+  type PersistedExecutionLike,
+} from "./executionWebSocket";
 
 type ExecutionStatus =
   | "queued"
@@ -149,10 +154,31 @@ function objectId(value: string, field: string): Types.ObjectId {
   return new (require("mongoose").Types.ObjectId)(value) as Types.ObjectId;
 }
 
+export type ExecutionNotifier = (execution: PersistedExecutionLike) => void;
+
+const defaultNotifier: ExecutionNotifier = (execution) => {
+  publishPersistedExecution(executionEventHub, execution);
+};
+
 export function createExecutionService(
   dependencies: ExecutionServiceDependencies = databaseDependencies,
   actions: ActionRegistry | undefined = dependencies.actions,
+  notify: ExecutionNotifier = defaultNotifier,
 ) {
+  // Live updates are best effort: a notification must never fail or roll back
+  // the execution it describes.
+  const safeNotify = (execution: PersistedExecutionLike | null | undefined) => {
+    if (!execution) {
+      return;
+    }
+
+    try {
+      notify(execution);
+    } catch {
+      // Ignored on purpose: persistence already succeeded.
+    }
+  };
+
   return {
     async startExecution(
       tenantId: Types.ObjectId,
@@ -206,6 +232,8 @@ export function createExecutionService(
         );
       }
 
+      safeNotify(runningExecution);
+
       let persistedStatus: ExecutionStatus = "running";
       let persistedNodeResults: RuntimeExecutionResult["nodeResults"] = [];
       const getPersistedStatus = (): ExecutionStatus => persistedStatus;
@@ -258,6 +286,7 @@ export function createExecutionService(
         persistedStatus = saved.status as ExecutionStatus;
         persistedNodeResults =
           saved.nodeResults as RuntimeExecutionResult["nodeResults"];
+        safeNotify(saved);
       };
 
       let result: RuntimeExecutionResult;
@@ -329,6 +358,8 @@ export function createExecutionService(
             : "Unable to persist the workflow execution result.",
         );
       }
+
+      safeNotify(finalExecution);
 
       return finalExecution;
     },

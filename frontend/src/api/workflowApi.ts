@@ -93,7 +93,9 @@ export type CreateWorkflowResponse = {
 }
 
 export type UpdateWorkflowRequest = {
-  graph: WorkflowGraph
+  name?: string
+  description?: string
+  graph?: WorkflowGraph
 }
 
 export type ListWorkflowsResponse = {
@@ -240,4 +242,96 @@ export async function deleteWorkflow(
 
     throw new Error(getApiErrorMessage(result, response.status))
   }
+}
+
+export type WorkflowStatusActionResponse = {
+  message: string
+  workflow: CreatedWorkflow
+}
+
+export async function activateWorkflow(
+  workflowId: string,
+  tenantApiKey: string,
+): Promise<WorkflowStatusActionResponse> {
+  if (!tenantApiKey.trim()) {
+    throw new Error('API authentication is not configured.')
+  }
+
+  const response = await fetch(
+    `${getApiBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}/activate`,
+    {
+      method: 'POST',
+      headers: {
+        'X-API-Key': tenantApiKey,
+      },
+    },
+  )
+
+  if (!response.ok) {
+    const result = (await response
+      .json()
+      .catch(() => null)) as WorkflowApiErrorResponse | null
+
+    throw new Error(getApiErrorMessage(result, response.status))
+  }
+
+  return (await response.json()) as WorkflowStatusActionResponse
+}
+
+export async function pauseWorkflow(
+  workflowId: string,
+  tenantApiKey: string,
+): Promise<WorkflowStatusActionResponse> {
+  if (!tenantApiKey.trim()) {
+    throw new Error('API authentication is not configured.')
+  }
+
+  const response = await fetch(
+    `${getApiBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}/pause`,
+    {
+      method: 'POST',
+      headers: {
+        'X-API-Key': tenantApiKey,
+      },
+    },
+  )
+
+  if (!response.ok) {
+    const result = (await response
+      .json()
+      .catch(() => null)) as WorkflowApiErrorResponse | null
+
+    throw new Error(getApiErrorMessage(result, response.status))
+  }
+
+  return (await response.json()) as WorkflowStatusActionResponse
+}
+
+export async function resumeWorkflow(
+  workflowId: string,
+  tenantApiKey: string,
+): Promise<WorkflowStatusActionResponse> {
+  if (!tenantApiKey.trim()) {
+    throw new Error('API authentication is not configured.')
+  }
+
+  const response = await fetch(
+    `${getApiBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}/resume`,
+    {
+      method: 'POST',
+      headers: {
+        'X-API-Key': tenantApiKey,
+      },
+    },
+  )
+
+  if (!response.ok) {
+    const result = (await response
+      .json()
+      .catch(() => null)) as WorkflowApiErrorResponse | null
+
+    throw new Error(getApiErrorMessage(result, response.status))
+  }
+
+  return (await response.json()) as WorkflowStatusActionResponse
 }

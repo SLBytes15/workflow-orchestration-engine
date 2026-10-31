@@ -12,6 +12,12 @@ interface NodeShellProps {
   selected?: boolean;
 }
 
+const NODE_KIND_ICON: Record<WorkflowNodeType, string> = {
+  trigger: "⚡",
+  task: "⚙",
+  condition: "◆",
+};
+
 function NodeShell({ kind, label, selected = false }: NodeShellProps) {
   return (
     <div
@@ -28,12 +34,23 @@ function NodeShell({ kind, label, selected = false }: NodeShellProps) {
           type="target"
           position={Position.Top}
           id={HANDLE.target}
-          className="workflow-node__handle"
+          className="workflow-node__handle workflow-node__handle--target"
+          aria-label="Input connection"
         />
       )}
 
-      <span className="workflow-node__kind">{NODE_KIND_LABEL[kind]}</span>
-      <p className="workflow-node__label">{label}</p>
+      <div className="workflow-node__header">
+        <span className="workflow-node__icon" aria-hidden="true">
+          {NODE_KIND_ICON[kind]}
+        </span>
+        <span className="workflow-node__kind">{NODE_KIND_LABEL[kind]}</span>
+      </div>
+
+      <div className="workflow-node__body">
+        <p className="workflow-node__label" title={label}>
+          {label}
+        </p>
+      </div>
 
       {kind === "condition" ? (
         <>
@@ -42,17 +59,27 @@ function NodeShell({ kind, label, selected = false }: NodeShellProps) {
             the agreed contract. Both are required and must be preserved
             as `edge.sourceHandle` on outgoing edges.
           */}
+          <div className="workflow-node__branches" aria-hidden="true">
+            <span className="workflow-node__branch-label workflow-node__branch-label--true">
+              True (Yes)
+            </span>
+            <span className="workflow-node__branch-label workflow-node__branch-label--false">
+              False (No)
+            </span>
+          </div>
           <Handle
             type="source"
             position={Position.Bottom}
             id={HANDLE.branchTrue}
             className="workflow-node__handle workflow-node__handle--true"
+            aria-label="True (Yes) branch"
           />
           <Handle
             type="source"
             position={Position.Bottom}
             id={HANDLE.branchFalse}
             className="workflow-node__handle workflow-node__handle--false"
+            aria-label="False (No) branch"
           />
         </>
       ) : (
@@ -60,7 +87,8 @@ function NodeShell({ kind, label, selected = false }: NodeShellProps) {
           type="source"
           position={Position.Bottom}
           id={HANDLE.source}
-          className="workflow-node__handle"
+          className="workflow-node__handle workflow-node__handle--source"
+          aria-label="Next step"
         />
       )}
     </div>

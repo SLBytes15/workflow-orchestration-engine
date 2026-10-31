@@ -139,7 +139,7 @@ describe("executeWorkflowGraph", () => {
     );
   });
 
-  
+
 it("fails when numeric comparison operands are invalid", async () => {
   const graph = createGraph();
 
@@ -540,5 +540,300 @@ it("fails when numeric comparison operands are invalid", async () => {
       message: "The registered action failed unexpectedly.",
     });
     assert.equal(JSON.stringify(result).includes("private handler detail"), false);
+  });
+
+  it("fails with ACTION_TIMEOUT when a handler exceeds its configured timeout", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "GET",
+      url: "https://example.test",
+      timeoutMs: 25,
+    };
+
+    const startedAt = Date.now();
+    const result = await executeWorkflowGraph(graph, { approved: true }, {
+      taskActions: {
+        http: {
+          // Never settles. Only the configured timeout can end the wait.
+          execute: () => new Promise<never>(() => {}),
+        },
+      },
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(result.status, "failed");
+    assert.deepEqual(result.error, {
+      code: "ACTION_TIMEOUT",
+      message: "The task action exceeded its configured timeout.",
+    });
+
+    const timedOutNode = result.nodeResults.find(
+      (node) => node.nodeId === "task-true",
+    );
+    assert.equal(timedOutNode?.status, "failed");
+    assert.equal(timedOutNode?.error?.code, "ACTION_TIMEOUT");
+    // Guards against the timeout being ignored and the run hanging.
+    assert.ok(elapsedMs < 2000, `timeout took ${elapsedMs}ms to fire`);
+  });
+
+  it("rejects non-positive timeouts before dispatching the action", async () => {
+    for (const timeoutMs of [0, -1, -250]) {
+      const graph = createGraph();
+      const task = graph.nodes.find((node) => node.id === "task-true");
+      assert.ok(task);
+      task.data.config = {
+        action: "http",
+        method: "GET",
+        url: "https://example.test",
+        timeoutMs,
+      };
+      let called = false;
+
+      const result = await executeWorkflowGraph(graph, { approved: true }, {
+        taskActions: {
+          http: {
+            execute: async () => {
+              called = true;
+              return { ok: true };
+            },
+          },
+        },
+      });
+
+      assert.equal(
+        result.status,
+        "failed",
+        `timeoutMs=${String(timeoutMs)} must fail validation`,
+      );
+      assert.equal(
+        result.error?.code,
+        "INVALID_ACTION_CONFIG",
+        `timeoutMs=${String(timeoutMs)} must be rejected`,
+      );
+      assert.equal(
+        called,
+        false,
+        `timeoutMs=${String(timeoutMs)} must not dispatch the handler`,
+      );
+    }
+  });
+
+  it("does not redispatch a failed task even when the node declares a retry policy", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "GET",
+      url: "https://example.test/dispatch",
+      retry: { attempts: 5, backoffMs: 10 },
+    };
+
+    let calls = 0;
+
+    const result = await executeWorkflowGraph(graph, { approved: true }, {
+      taskActions: {
+        http: {
+          execute: async () => {
+            calls += 1;
+            return {
+              ok: false as const,
+              error: { code: "HTTP_503", message: "Upstream unavailable." },
+            };
+          },
+        },
+      },
+    });
+
+    // A declared retry policy must not cause a second dispatch today.
+    assert.equal(calls, 1);
+    assert.equal(result.status, "failed");
+    assert.deepEqual(result.error, {
+      code: "HTTP_503",
+      message: "Upstream unavailable.",
+    });
+    assert.equal(
+      result.nodeResults.filter((node) => node.nodeId === "task-true").length,
+      1,
+    );
+  });
+
+  it("records a single attempt when a task handler throws and retry metadata is present", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "GET",
+      url: "https://example.test/dispatch",
+      retry: { attempts: 3, backoffMs: 10 },
+    };
+
+    let calls = 0;
+
+    const result = await executeWorkflowGraph(graph, { approved: true }, {
+      taskActions: {
+        http: {
+          execute: async () => {
+            calls += 1;
+            throw new Error("transport exploded");
+          },
+        },
+      },
+    });
+
+    assert.equal(calls, 1);
+    assert.equal(result.status, "failed");
+    assert.equal(result.error?.code, "ACTION_HANDLER_FAILED");
+  });
+
+  it("strips retry and timeoutMs from the handler payload", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "GET",
+      url: "https://example.test/strip",
+      timeoutMs: 50,
+      retry: { attempts: 3, backoffMs: 25 },
+    };
+
+    let receivedInput: Record<string, unknown> | undefined;
+    const result = await executeWorkflowGraph(graph, { approved: true }, {
+      taskActions: {
+        http: {
+          execute: async (input) => {
+            receivedInput = { ...input };
+            return { ok: true };
+          },
+        },
+      },
+    });
+
+    assert.equal(result.status, "completed");
+    assert.ok(receivedInput);
+
+    // Orchestration-only controls must not reach the downstream service.
+    assert.equal("retry" in receivedInput, false);
+    assert.equal("timeoutMs" in receivedInput, false);
+    // Action-specific configuration is still forwarded unchanged.
+    assert.deepEqual(receivedInput, {
+      action: "http",
+      method: "GET",
+      url: "https://example.test/strip",
+    });
+  });
+
+  it("still enforces timeoutMs after it is stripped from the handler payload", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "GET",
+      url: "https://example.test/slow",
+      timeoutMs: 25,
+      retry: { attempts: 2, backoffMs: 10 },
+    };
+
+    let receivedInput: Record<string, unknown> | undefined;
+    const result = await executeWorkflowGraph(graph, { approved: true }, {
+      taskActions: {
+        http: {
+          execute: (input) => {
+            receivedInput = { ...input };
+            return new Promise<never>(() => {});
+          },
+        },
+      },
+    });
+
+    assert.equal(result.status, "failed");
+    assert.equal(result.error?.code, "ACTION_TIMEOUT");
+    assert.ok(receivedInput);
+    assert.equal("timeoutMs" in receivedInput, false);
+    assert.equal("retry" in receivedInput, false);
+  });
+
+  it("rejects malformed retry configurations before dispatching the action", async () => {
+    const malformed: unknown[] = [
+      null,
+      "retry",
+      [],
+      {},
+      { attempts: 3 },
+      { backoffMs: 10 },
+      { attempts: 0, backoffMs: 10 },
+      { attempts: -1, backoffMs: 10 },
+      { attempts: 1.5, backoffMs: 10 },
+      { attempts: "3", backoffMs: 10 },
+      { attempts: 3, backoffMs: -5 },
+      { attempts: 3, backoffMs: null },
+      { attempts: 3, backoffMs: "10" },
+    ];
+
+    for (const retry of malformed) {
+      const graph = createGraph();
+      const task = graph.nodes.find((node) => node.id === "task-true");
+      assert.ok(task);
+      task.data.config = {
+        action: "http",
+        method: "GET",
+        url: "https://example.test/retry",
+        retry,
+      };
+      let called = false;
+
+      const result = await executeWorkflowGraph(graph, { approved: true }, {
+        taskActions: {
+          http: {
+            execute: async () => {
+              called = true;
+              return { ok: true };
+            },
+          },
+        },
+      });
+
+      const label = JSON.stringify(retry) ?? String(retry);
+      assert.equal(result.status, "failed", `${label} must fail validation`);
+      assert.equal(
+        result.error?.code,
+        "INVALID_RETRY_CONFIG",
+        `${label} must be rejected`,
+      );
+      assert.equal(called, false, `${label} must not dispatch the handler`);
+    }
+  });
+
+  it("accepts a well-formed retry shape without executing it", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "GET",
+      url: "https://example.test/retry-ok",
+      retry: { attempts: 4, backoffMs: 0 },
+    };
+
+    let calls = 0;
+    const result = await executeWorkflowGraph(graph, { approved: true }, {
+      taskActions: {
+        http: {
+          execute: async () => {
+            calls += 1;
+            return { ok: true };
+          },
+        },
+      },
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(calls, 1);
   });
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   appendWorkflow,
+  initialWorkflows,
   isRunButtonDisabled,
   mapPersistedWorkflow,
   mapPersistedWorkflows,
@@ -14,6 +15,8 @@ import {
   createConditionConfig,
   createConditionConfigFromInput,
   createConditionNode,
+  createTaskNode,
+  createTriggerNode,
   getConditionConfigError,
   hasValidConditionConfig,
   MAX_NODE_LABEL_LENGTH,
@@ -389,5 +392,83 @@ describe("workflow node labels", () => {
       sampleWorkflow,
       saved,
     ]);
+  });
+});
+
+describe("node factories", () => {
+  it("creates trigger nodes with valid default structure", () => {
+    const trigger = createTriggerNode("trigger-1", { x: 250, y: 50 });
+    assert.equal(trigger.id, "trigger-1");
+    assert.equal(trigger.type, "trigger");
+    assert.equal(trigger.data.type, "trigger");
+    assert.equal(trigger.data.label, "Trigger");
+    assert.deepEqual(trigger.position, { x: 250, y: 50 });
+  });
+
+  it("creates task nodes with valid default structure", () => {
+    const task = createTaskNode("task-1", { x: 100, y: 200 }, "Charge card");
+    assert.equal(task.id, "task-1");
+    assert.equal(task.type, "task");
+    assert.equal(task.data.type, "task");
+    assert.equal(task.data.label, "Charge card");
+    assert.deepEqual(task.position, { x: 100, y: 200 });
+  });
+
+  it("creates condition nodes with valid clause and customizable label", () => {
+    const condition = createConditionNode(
+      "condition-1",
+      { x: 250, y: 150 },
+      "Check inventory",
+    );
+    assert.equal(condition.id, "condition-1");
+    assert.equal(condition.type, "condition");
+    assert.equal(condition.data.type, "condition");
+    assert.equal(condition.data.label, "Check inventory");
+    assert.equal(hasValidConditionConfig(condition.data), true);
+  });
+});
+
+describe("dashboard metrics and initial state", () => {
+  it("provides valid initial sample workflows with expected statuses", () => {
+    assert.equal(initialWorkflows.length, 3);
+    assert.equal(initialWorkflows[0].status, "Active");
+    assert.equal(initialWorkflows[1].status, "Draft");
+    assert.equal(initialWorkflows[2].status, "Paused");
+    for (const workflow of initialWorkflows) {
+      assert.equal(workflow.isPersisted, false);
+      assert.ok(workflow.name.length > 0);
+      assert.ok(workflow.description.length > 0);
+    }
+  });
+
+  it("calculates status counts accurately for dashboard metrics", () => {
+    const list: Workflow[] = [
+      ...initialWorkflows,
+      {
+        id: "w4",
+        isPersisted: true,
+        name: "Order Fulfillment",
+        description: "Fulfills orders",
+        status: "Active",
+        version: 1,
+        updatedAt: "2026-10-11",
+      },
+    ];
+
+    const activeCount = list.filter((w) => w.status === "Active").length;
+    const draftCount = list.filter((w) => w.status === "Draft").length;
+    const pausedCount = list.filter((w) => w.status === "Paused").length;
+
+    assert.equal(list.length, 4);
+    assert.equal(activeCount, 2);
+    assert.equal(draftCount, 1);
+    assert.equal(pausedCount, 1);
+  });
+
+  it("handles empty workflow lists gracefully without exceptions", () => {
+    const emptyList: Workflow[] = [];
+    const activeCount = emptyList.filter((w) => w.status === "Active").length;
+    assert.equal(emptyList.length, 0);
+    assert.equal(activeCount, 0);
   });
 });

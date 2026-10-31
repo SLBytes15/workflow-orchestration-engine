@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { validateWorkflowGraph } from "../src/graphValidation";
+import {
+  validateWorkflowGraph,
+  validateWorkflowGraphDetailed,
+} from "../src/graphValidation";
 
 type TestEdge = { id: string; source: string; target: string; sourceHandle?: string };
 type TestNode = {
@@ -130,5 +133,46 @@ describe("validateWorkflowGraph", () => {
     assert.ok(
       validateWorkflowGraph(input).some((error) => /finite position/.test(error)),
     );
+  });
+
+  it("rejects a condition with multiple true branches", () => {
+    const input = graph();
+    input.edges.push({
+      id: "e-extra-true",
+      source: "condition-1",
+      sourceHandle: "true",
+      target: "task-2",
+    });
+    const issues = validateWorkflowGraphDetailed(input);
+    const multipleTrueIssue = issues.find((issue) =>
+      /multiple true branches/.test(issue.message),
+    );
+    assert.ok(multipleTrueIssue);
+    assert.equal(multipleTrueIssue?.nodeId, "condition-1");
+  });
+
+  it("reports affected nodeId in detailed validation errors", () => {
+    const input = graph();
+    input.nodes.push({
+      id: "condition-8",
+      type: "condition",
+      position: { x: 200, y: 400 },
+      data: { type: "condition", label: "Late condition" },
+    });
+    const issues = validateWorkflowGraphDetailed(input);
+    const missingTrue = issues.find(
+      (issue) =>
+        issue.nodeId === "condition-8" &&
+        /missing its true branch/.test(issue.message),
+    );
+    const missingFalse = issues.find(
+      (issue) =>
+        issue.nodeId === "condition-8" &&
+        /missing its false branch/.test(issue.message),
+    );
+    assert.ok(missingTrue);
+    assert.ok(missingFalse);
+    assert.equal(missingTrue?.nodeId, "condition-8");
+    assert.equal(missingFalse?.nodeId, "condition-8");
   });
 });

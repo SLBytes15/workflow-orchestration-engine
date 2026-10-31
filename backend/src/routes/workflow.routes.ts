@@ -18,14 +18,244 @@ import {
   validateWorkflowGraph,
   type WorkflowGraph,
 } from "../validators/workflow-graph.validator";
+import { validateTriggerConfigurations } from "../validators/event-contract.validator";
 
+
+export type WorkflowRouterService =
+  | ReturnType<typeof createWorkflowService>
+  | {
+      createWorkflow: (command: any) => Promise<unknown>;
+      listWorkflows: (tenantId: Types.ObjectId) => Promise<unknown[]>;
+      getWorkflowById?: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+      ) => Promise<unknown | null>;
+      updateWorkflow: (command: any) => Promise<unknown | null>;
+      updateWorkflowGraph: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+        graph: any,
+      ) => Promise<unknown | null>;
+      deleteWorkflow: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+      ) => Promise<unknown | null>;
+      activateWorkflow: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+      ) => Promise<any>;
+      pauseWorkflow: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+      ) => Promise<any>;
+      resumeWorkflow: (
+        tenantId: Types.ObjectId,
+        workflowId: string,
+      ) => Promise<any>;
+    };
 
 export function createWorkflowRouter(
   resolver: TenantResolver = createTenantResolver(),
-  service = createWorkflowService(),
+  service: WorkflowRouterService = createWorkflowService(),
 ) {
   const router = Router();
   const requireTenantAuth = tenantAuthMiddleware(resolver);
+
+  router.post("/:workflowId/activate", requireTenantAuth, async (req, res, next) => {
+    try {
+      const tenantContext = req.tenantContext;
+      if (!tenantContext) {
+        res.status(401).json({
+          error: {
+            code: "UNAUTHORIZED",
+            message: "A valid API key is required",
+          },
+        });
+        return;
+      }
+
+      const workflowId = String(req.params.workflowId);
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        res.status(400).json({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "workflowId must be a valid ID",
+          },
+        });
+        return;
+      }
+
+      const result = await service.activateWorkflow(
+        tenantContext.tenantId,
+        workflowId,
+      );
+
+      if (result.outcome === "not_found") {
+        res.status(404).json({
+          error: {
+            code: "WORKFLOW_NOT_FOUND",
+            message: "Workflow not found",
+          },
+        });
+        return;
+      }
+
+      if (result.outcome === "invalid_status") {
+        res.status(400).json({
+          error: {
+            code: "INVALID_WORKFLOW_STATUS",
+            message: "Only draft workflows can be activated",
+          },
+        });
+        return;
+      }
+
+      if (result.outcome === "invalid_graph") {
+        res.status(400).json({
+          error: {
+            code: "INVALID_WORKFLOW_GRAPH",
+            message: "The workflow graph is invalid and cannot be activated",
+            details: result.errors,
+          },
+        });
+        return;
+      }
+
+      res.status(200).json({
+        message: "Workflow activated successfully",
+        workflow: result.workflow,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/:workflowId/pause", requireTenantAuth, async (req, res, next) => {
+    try {
+      const tenantContext = req.tenantContext;
+      if (!tenantContext) {
+        res.status(401).json({
+          error: {
+            code: "UNAUTHORIZED",
+            message: "A valid API key is required",
+          },
+        });
+        return;
+      }
+
+      const workflowId = String(req.params.workflowId);
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        res.status(400).json({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "workflowId must be a valid ID",
+          },
+        });
+        return;
+      }
+
+      const result = await service.pauseWorkflow(
+        tenantContext.tenantId,
+        workflowId,
+      );
+
+      if (result.outcome === "not_found") {
+        res.status(404).json({
+          error: {
+            code: "WORKFLOW_NOT_FOUND",
+            message: "Workflow not found",
+          },
+        });
+        return;
+      }
+
+      if (result.outcome === "invalid_status") {
+        res.status(400).json({
+          error: {
+            code: "INVALID_WORKFLOW_STATUS",
+            message: "Only active workflows can be paused",
+          },
+        });
+        return;
+      }
+
+      res.status(200).json({
+        message: "Workflow paused successfully",
+        workflow: result.workflow,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/:workflowId/resume", requireTenantAuth, async (req, res, next) => {
+    try {
+      const tenantContext = req.tenantContext;
+      if (!tenantContext) {
+        res.status(401).json({
+          error: {
+            code: "UNAUTHORIZED",
+            message: "A valid API key is required",
+          },
+        });
+        return;
+      }
+
+      const workflowId = String(req.params.workflowId);
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        res.status(400).json({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "workflowId must be a valid ID",
+          },
+        });
+        return;
+      }
+
+      const result = await service.resumeWorkflow(
+        tenantContext.tenantId,
+        workflowId,
+      );
+
+      if (result.outcome === "not_found") {
+        res.status(404).json({
+          error: {
+            code: "WORKFLOW_NOT_FOUND",
+            message: "Workflow not found",
+          },
+        });
+        return;
+      }
+
+      if (result.outcome === "invalid_status") {
+        res.status(400).json({
+          error: {
+            code: "INVALID_WORKFLOW_STATUS",
+            message: "Only paused workflows can be resumed",
+          },
+        });
+        return;
+      }
+
+      if (result.outcome === "invalid_graph") {
+        res.status(400).json({
+          error: {
+            code: "INVALID_WORKFLOW_GRAPH",
+            message: "The workflow graph is invalid and cannot be resumed",
+            details: result.errors,
+          },
+        });
+        return;
+      }
+
+      res.status(200).json({
+        message: "Workflow resumed successfully",
+        workflow: result.workflow,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
 
   router.delete("/:workflowId", requireTenantAuth, async (req, res, next) => {
     try {
@@ -98,6 +328,65 @@ export function createWorkflowRouter(
     }
   });
 
+  router.get("/:workflowId", requireTenantAuth, async (req, res, next) => {
+    try {
+      const tenantContext = req.tenantContext;
+
+      if (!tenantContext) {
+        res.status(401).json({
+          error: {
+            code: "UNAUTHORIZED",
+            message: "A valid API key is required",
+          },
+        });
+        return;
+      }
+
+      const workflowId = String(req.params.workflowId);
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        res.status(400).json({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "workflowId must be a valid ID",
+          },
+        });
+        return;
+      }
+
+      if (!service.getWorkflowById) {
+        res.status(500).json({
+          error: {
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Workflow lookup not supported",
+          },
+        });
+        return;
+      }
+
+      const workflow = await service.getWorkflowById(
+        tenantContext.tenantId,
+        workflowId,
+      );
+
+      if (!workflow) {
+        res.status(404).json({
+          error: {
+            code: "WORKFLOW_NOT_FOUND",
+            message: "Workflow not found",
+          },
+        });
+        return;
+      }
+
+      res.status(200).json({
+        message: "Workflow retrieved successfully",
+        workflow,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.put("/:workflowId/graph", requireTenantAuth, async (req, res, next) => {
     try {
       const tenantContext = req.tenantContext;
@@ -133,7 +422,10 @@ export function createWorkflowRouter(
       const errors = [
         ...graphErrors,
         ...(graphErrors.length === 0
-          ? validateConditionConfigurations(body.graph)
+          ? [
+              ...validateConditionConfigurations(body.graph),
+              ...validateTriggerConfigurations(body.graph),
+            ]
           : []),
       ];
 

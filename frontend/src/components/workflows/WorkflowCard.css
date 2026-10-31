@@ -1,40 +1,57 @@
 .workflow-card {
   width: 100%;
   min-width: 0;
+  height: 100%;
   box-sizing: border-box;
-  padding: 22px;
+  padding: 20px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg);
   display: flex;
-  align-items: center;
-  gap: 20px;
+  flex-direction: column;
+  justify-content: space-between;
   box-shadow: var(--shadow);
-  transition: border-color 0.2s ease, transform 0.2s ease;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .workflow-card:hover {
   border-color: var(--accent-border);
   transform: translateY(-2px);
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.35);
+}
+
+.workflow-card:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .workflow-card__content {
   min-width: 0;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+}
+
+.workflow-card__content--open {
+  cursor: pointer;
 }
 
 .workflow-card__heading {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 10px;
 }
 
 .workflow-card h2 {
   margin: 0;
-  font-size: 19px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  color: var(--text-h);
   overflow-wrap: anywhere;
 }
 
@@ -44,99 +61,185 @@
   font-size: 14px;
   line-height: 1.6;
   overflow-wrap: anywhere;
+  flex-grow: 1;
 }
 
 .workflow-card__badge {
   display: inline-flex;
   align-items: center;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
+  padding: 3px 10px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: 1.4;
+  flex-shrink: 0;
+  border: 1px solid transparent;
 }
 
 .workflow-card__badge--active {
-  color: #15803d;
-  background: #dcfce7;
-  border-color: #bbf7d0;
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.25);
 }
 
 .workflow-card__badge--draft {
-  color: #92400e;
-  background: #fef3c7;
-  border-color: #fde68a;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.25);
 }
 
 .workflow-card__badge--paused {
-  color: #475569;
-  background: #e2e8f0;
-  border-color: #cbd5e1;
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.25);
 }
 
 .workflow-card__meta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px 16px;
   color: var(--text);
   font-size: 12px;
+  margin-top: auto;
+  opacity: 0.85;
 }
 
-.workflow-card__open {
-  padding: 9px 14px;
-  border: 1px solid var(--accent-border);
-  border-radius: 8px;
-  color: var(--accent);
-  background: var(--bg);
+.workflow-card__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.workflow-card__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 6px;
   font: inherit;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.4;
+  text-decoration: none;
 }
 
+.workflow-card__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.workflow-card__edit,
+.workflow-card__open {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-h);
+}
+
+.workflow-card__edit:hover,
 .workflow-card__open:hover {
   background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.workflow-card__run {
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  color: #c084fc;
+}
+
+.workflow-card__run:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.24);
+  border-color: #a855f7;
+  color: #e9d5ff;
+}
+
+.workflow-card__run:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+.workflow-card__activate,
+.workflow-card__resume {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #10b981;
+}
+
+.workflow-card__activate:hover:not(:disabled),
+.workflow-card__resume:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: #10b981;
+  color: #34d399;
+}
+
+.workflow-card__pause {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+}
+
+.workflow-card__pause:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.workflow-card__activate:disabled,
+.workflow-card__pause:disabled,
+.workflow-card__resume:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 .workflow-card__delete {
-  padding: 9px 14px;
-  border: 1px solid #dc2626;
-  border-radius: 8px;
-  color: #b91c1c;
-  background: var(--bg);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #f87171;
 }
 
 .workflow-card__delete:hover:not(:disabled) {
-  background: #fef2f2;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.4);
 }
 
 .workflow-card__delete:disabled {
+  opacity: 0.5;
   cursor: wait;
-  opacity: 0.65;
 }
 
-@media (prefers-color-scheme: dark) {
-  .workflow-card__badge--active {
-    color: #86efac;
-    background: #14532d;
-    border-color: #166534;
+@media (prefers-color-scheme: light) {
+  .workflow-card__run {
+    background: rgba(124, 58, 237, 0.08);
+    border: 1px solid rgba(124, 58, 237, 0.25);
+    color: #7c3aed;
   }
 
-  .workflow-card__badge--draft {
-    color: #fde68a;
-    background: #78350f;
-    border-color: #92400e;
+  .workflow-card__run:hover:not(:disabled) {
+    background: rgba(124, 58, 237, 0.15);
+    border-color: #7c3aed;
+    color: #6d28d9;
   }
 
-  .workflow-card__badge--paused {
-    color: #cbd5e1;
-    background: #334155;
-    border-color: #475569;
+  .workflow-card__delete {
+    color: #dc2626;
+    border-color: rgba(220, 38, 38, 0.2);
+  }
+
+  .workflow-card__delete:hover:not(:disabled) {
+    background: #fef2f2;
+    border-color: rgba(220, 38, 38, 0.35);
   }
 }
 
@@ -145,8 +248,13 @@
     padding: 16px;
   }
 
-  .workflow-card__heading {
-    align-items: flex-start;
+  .workflow-card__actions {
+    justify-content: stretch;
+  }
+
+  .workflow-card__btn {
+    flex: 1 1 auto;
+    text-align: center;
   }
 }
 

@@ -18,7 +18,6 @@ const PAGE_SIZE = 20
 function getId(item: CreatedWorkflow): string {
   return String(item.id ?? item._id ?? '')
 }
-
 function sanitizeErrorMessage(message: string): string {
   const cleaned = message
     .replace(/https?:\/\/\S+/gi, '[technical details hidden]')
@@ -363,6 +362,7 @@ function ExecutionsPage({
 
         <button
           type="button"
+          className="executions-page__refresh-btn"
           onClick={() => setRefreshToken((value) => value + 1)}
           disabled={
             loadingHistory ||
@@ -371,7 +371,7 @@ function ExecutionsPage({
             !selectedWorkflowId
           }
         >
-          Refresh history
+          ↻ Refresh history
         </button>
       </header>
 
@@ -659,13 +659,9 @@ function ExecutionsPage({
                   <strong>{node.nodeId}</strong>
                   <span>{node.status}</span>
 
-                  {node.error && (
+                  {node.error && getErrorText(node.error) && (
                     <p className="executions-page__error">
-                      {sanitizeErrorMessage(
-                        typeof node.error === 'string'
-                          ? node.error
-                          : node.error.message ?? '',
-                      )}
+                      Error: {getErrorText(node.error)}
                     </p>
                   )}
 
