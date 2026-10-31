@@ -17,12 +17,17 @@ async function main(): Promise<void> {
       );
     }
 
+    const slug = process.env.TENANT_SLUG?.trim() || "local-dev";
+    const name =
+      process.env.TENANT_NAME?.trim() ||
+      (slug === "local-dev" ? "Local Development Tenant" : slug);
+
     const tenant = await TenantModel.findOneAndUpdate(
-      { slug: "local-dev" },
+      { slug },
       {
         $setOnInsert: {
-          name: "Local Development Tenant",
-          slug: "local-dev",
+          name,
+          slug,
           status: "active",
         },
       },

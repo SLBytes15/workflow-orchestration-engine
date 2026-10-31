@@ -8,6 +8,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "tsx --test src/**/*.test.ts",
+    "seed:dev-tenant": "tsx scripts/seedDevelopmentTenant.ts",
+    "seed:api-key": "tsx scripts/seedApiKey.ts",
     "seed:mahak-test-tenants": "tsx scripts/seedMahakTestTenants.ts"
   },
   "keywords": [],
@@ -20,12 +22,14 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.1",
     "mongodb": "^7.7.0",
-    "mongoose": "^9.11.1"
+    "mongoose": "^9.11.1",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }

@@ -260,6 +260,7 @@ dispatch-boundary change and remains pending implementation.
   leases, idempotency contract, retry-state representation, and DLQ representation.
 - **NOT IMPLEMENTED** — attempt counting, backoff, retry classification, retry execution,
   durable DLQ, worker/queue, leases, idempotency keys, mid-execution progress persistence.
+  `retry` remains declared, validated and inert; it is never acted on.
 
 ---
 
@@ -277,6 +278,14 @@ in `docs/verification/2026-10-29-nithin.md`):
    no retry-wait state.
 4. Each node is dispatched exactly once per execution when a later node fails
    (duplicate-dispatch guard).
+
+Added with the D1 implementation (`docs/verification/2026-10-30-nithin.md`):
+
+5. Malformed `retry` shapes are rejected before dispatch and the handler is never called.
+6. A well-formed `retry` is accepted and still dispatched exactly once.
+7. `retry` and `timeoutMs` are absent from the handler payload, while `timeoutMs` still
+   ends the wait.
+8. The same two fields are absent from the compensation context's `taskConfig`.
 
 ---
 

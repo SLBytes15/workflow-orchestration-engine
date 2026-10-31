@@ -217,6 +217,24 @@ const record: CreatedWorkflow = {
       return dependencies.findWorkflowRecordsByTenant(tenantId);
     },
 
+    async getWorkflowById(
+      tenantId: Types.ObjectId,
+      workflowId: string,
+    ): Promise<unknown | null> {
+      if (!/^[a-f\d]{24}$/i.test(workflowId)) {
+        return null;
+      }
+
+      if (!dependencies.findWorkflowRecordById) {
+        throw new Error("Workflow lookup is not configured");
+      }
+
+      return dependencies.findWorkflowRecordById(
+        tenantId,
+        new Types.ObjectId(workflowId),
+      );
+    },
+
     async updateWorkflow({
       tenantId,
       workflowId,
