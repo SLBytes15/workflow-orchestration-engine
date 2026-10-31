@@ -8,8 +8,9 @@ branch; no other branch or teammate implementation was inspected.
 
 - **APPROVED DESIGN** — agreed MVP behavior, not proof of implementation.
 - **IMPLEMENTED** — present in the inspected source.
-- **TESTED** — covered by an existing, identified test. A proposed QA case is
-  not evidence that the feature has been tested.
+- **UNIT-TESTED / INTEGRATION-TESTED** — covered by an existing test of the
+  stated type. A proposed QA case is not evidence that the feature has been
+  tested.
 - **UNVERIFIED** — no implementation or test evidence was found.
 - **PENDING BACKEND/FRONTEND INTEGRATION** — design is approved, but the
   required implementation is not present on this branch.
@@ -37,6 +38,9 @@ present in the inspected source.
 - Serve WebSocket connections at `/ws/executions`.
 - Issue short-lived connection tickets through an authenticated
   `POST /api/executions/ws-ticket` REST endpoint.
+- Return `{ "ticket": "<short-lived-token>", "expiresAt": "<ISO-8601 timestamp>" }`.
+- Present the ticket as `?ticket=<encoded-ticket>`; never put API keys or other
+  long-lived credentials in the WebSocket URL.
 - Send only execution lifecycle events; REST remains authoritative.
 
 ### Current branch
@@ -57,33 +61,34 @@ contract.
 
 The authenticated REST execution routes use `tenantAuthMiddleware`. It reads
 `x-api-key`, resolves it to a tenant, and places the resolved tenant ID in
-server-side request context. The current resolver validates an active API key
-and active tenant through the API-key and tenant models. This is existing REST
-authentication, not WebSocket ticket authentication.
+server-side request context. The database-backed resolver rejects missing,
+inactive, revoked, or expired API keys and missing or inactive tenants; the
+middleware returns `401` when the key is missing or unresolved. This is
+existing REST authentication, not WebSocket ticket authentication.
 
 ## C. Authentication and ticket lifecycle
 
 ### Approved design
 
 A client first calls the ticket endpoint using the existing authenticated REST
-client. A ticket must be cryptographically unpredictable, valid for 60 seconds,
-single-use, stored in memory for this MVP, and bound server-side to the tenant
-resolved from the API key. Missing, invalid, expired, and previously used
+client. The approved response is
+`{ "ticket": "<short-lived-token>", "expiresAt": "<ISO-8601 timestamp>" }`.
+A ticket must be cryptographically unpredictable, valid for 60 seconds,
+stored in memory for this MVP, single-use, and bound server-side to the tenant
+resolved from the API key. The frontend presents it as
+`?ticket=<encoded-ticket>`. Missing, invalid, expired, and previously used
 tickets must be rejected. A client-supplied tenant ID must never establish
-authorization.
-
-API keys and long-lived credentials must not appear in a WebSocket URL. The
-approved design does not establish a ticket response shape or how the ticket
-is presented to the WebSocket handshake; those details remain to be specified
-by the implementation without weakening the credential requirements.
+authorization. API keys must never appear in the WebSocket URL.
 
 ### Current branch
 
 The authenticated REST middleware and tenant resolver are implemented in
 [backend/src/middleware/tenantAuth.middleware.ts](../backend/src/middleware/tenantAuth.middleware.ts)
 and [backend/src/services/tenantResolver.ts](../backend/src/services/tenantResolver.ts).
-Ticket issuance, ticket storage, expiry enforcement, single-use enforcement,
-and WebSocket handshake rejection are **UNVERIFIED** and
+The approved response shape, query transport, and security properties are
+**APPROVED DESIGN** only. Ticket issuance, response, storage, expiry,
+single-use enforcement, unpredictable generation, and WebSocket handshake
+rejection are **NOT IMPLEMENTED**, **UNTESTED**, and
 **PENDING BACKEND/FRONTEND INTEGRATION**.
 
 ## D. Tenant isolation
@@ -168,8 +173,10 @@ or tested.
 4. Validate the event name and payload before applying it to the matching
    execution.
 5. Reconnect with bounded backoff after an unexpected disconnect.
-6. Refetch current execution state through REST after reconnect.
-7. Close the socket and remove handlers when the component unmounts or its
+6. Obtain a fresh ticket for each reconnect attempt that establishes a new
+   connection.
+7. Refetch current execution state through REST after reconnect.
+8. Close the socket and remove handlers when the component unmounts or its
    connection context changes.
 
 REST history, pagination, manual refresh, loading, error, and empty states
@@ -182,9 +189,9 @@ or simulated updates.
 loads workflows and paginated execution history, supports manual REST refresh,
 and fetches execution details. Requests use the REST client in
 [frontend/src/api/executionApi.ts](../frontend/src/api/executionApi.ts).
-There is no ticket request, WebSocket connection, event validation, reconnect
-backoff, reconnect refresh, or socket cleanup implementation in the inspected
-frontend source.
+There is no ticket request, WebSocket connection, event validation, bounded
+reconnect backoff, fresh-ticket reconnect, reconnect refresh, or socket
+cleanup implementation in the inspected frontend source.
 
 ## G. Error handling and graceful shutdown
 
@@ -288,15 +295,16 @@ the backend and frontend WebSocket integrations are pending.
 
 | Feature | Approved design | Implemented | Tested | Evidence/notes |
 |---|---|---|---|---|
-| Authenticated REST execution history and details | REST is authoritative | Yes | Existing REST route tests are present; no WebSocket behavior is covered by them | `backend/src/routes/execution.routes.ts`; `backend/src/routes/execution.routes.test.ts`; `frontend/src/pages/ExecutionsPage.tsx` |
-| REST API-key authentication and server-derived tenant context | Reuse existing tenant authentication | Yes, for REST | Existing auth cases are present in REST route tests | `backend/src/middleware/tenantAuth.middleware.ts`; `backend/src/services/tenantResolver.ts` |
-| Ticket endpoint, 60-second expiry, single use, unpredictable in-memory ticket | Required | No | No | No ticket endpoint or ticket store found |
-| `/ws/executions` using `ws` on the existing HTTP server | Required | No | No | No `ws` dependency or WebSocket handler found |
-| Tenant-bound WebSocket connections and tenant-scoped delivery | Required | No | No | REST execution reads/writes are tenant-scoped; no socket tracking or publisher found |
-| Persisted execution lifecycle status values | Use actual persisted values | Yes, for persistence | Execution-service tests exist; WebSocket event behavior is not covered | `backend/src/models/WorkflowExecution.ts`; `backend/src/services/execution.service.ts` |
-| Approved event envelope, terminal events, publish-after-persistence | Required | No | No | No event publisher or WebSocket contract tests found; compensation terminal mapping remains unresolved |
-| Frontend ticket acquisition, validation, reconnect, REST refresh, cleanup | Required | No | No | Current page uses REST; no WebSocket client or ticket API found |
-| WebSocket error handling and graceful cleanup | Required | No | No | Current shutdown closes the HTTP server and stops the watcher; no WebSocket resources exist to clean up |
+| Authenticated REST execution history and details | Approved; REST is authoritative | Implemented | Route/service tests use injected dependencies | `backend/src/routes/execution.routes.ts`; no WebSocket behavior covered |
+| REST API-key authentication and server-derived tenant context | Approved prerequisite | Implemented for REST | Route tests cover missing/invalid keys and tenant context; no live-database auth integration claimed | `backend/src/middleware/tenantAuth.middleware.ts`; `backend/src/services/tenantResolver.ts` |
+| `POST /api/executions/ws-ticket`, approved response, unpredictable tenant-bound 60-second single-use ticket | Approved | Pending | No ticket tests | No ticket route or ticket store |
+| `/ws/executions`, ticket query handshake, and rejection behavior | Approved | Pending | No WebSocket tests | No `ws` dependency or WebSocket handler |
+| Tenant-bound sockets and tenant-scoped event delivery | Approved | Pending | No WebSocket tenant-isolation tests | REST is tenant-scoped; no socket registry or publisher |
+| Event names/envelope and publish-after-persistence | Approved | Pending | No event contract/publisher tests | No event is emitted; status-to-terminal-event mapping for compensation statuses needs an explicit rule |
+| Send-failure isolation | Approved | Pending | No tests | No socket send path exists |
+| Bounded reconnect with fresh ticket, then REST refresh | Approved | Pending | No frontend WebSocket tests | Frontend currently uses REST only |
+| Persisted execution status values | Approved payload must use actual values | Implemented in REST persistence | Service tests cover lifecycle states; no WebSocket serialization test | `backend/src/models/WorkflowExecution.ts`; `backend/src/services/execution.service.ts` |
+| WebSocket cleanup and graceful shutdown | Approved | Pending | No tests | No WebSocket resources exist to clean up |
 
 **Overall:** The lifecycle notification architecture is **APPROVED DESIGN**;
 backend and frontend WebSocket work is **PENDING BACKEND/FRONTEND INTEGRATION**.
