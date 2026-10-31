@@ -77,7 +77,10 @@ function setup() {
       ) {
         return null;
       }
-      if (record.status === "active" || (record.status as string) === "paused") {
+      if (
+        (record.status as string) === "active" ||
+        (record.status as string) === "paused"
+      ) {
         (record as any).status = "paused";
         return record;
       }
@@ -95,7 +98,10 @@ function setup() {
       ) {
         return null;
       }
-      if (record.status === "paused" || (record.status as string) === "active") {
+      if (
+        (record.status as string) === "paused" ||
+        (record.status as string) === "active"
+      ) {
         (record as any).status = "active";
         return record;
       }
