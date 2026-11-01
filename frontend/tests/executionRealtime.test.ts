@@ -139,8 +139,14 @@ describe("execution WebSocket connection manager", () => {
 
     assert.equal(receivedEvents.length, 1);
 
+    const staleMessageHandler = sockets[0].onmessage;
     sockets[0].disconnect();
 
+    staleMessageHandler?.({
+      data: JSON.stringify(validEvent),
+    } as MessageEvent);
+
+    assert.equal(receivedEvents.length, 1);
     assert.deepEqual(scheduledDelays, [1000]);
 
     scheduledCallbacks[0]();
@@ -155,9 +161,21 @@ describe("execution WebSocket connection manager", () => {
 
     assert.equal(reconnectCount, 1);
 
+    const messageHandlerAfterUnmount = sockets[1].onmessage;
+
     cleanup();
 
     assert.equal(sockets[1].closed, true);
+    assert.equal(sockets[1].onopen, null);
+    assert.equal(sockets[1].onmessage, null);
+    assert.equal(sockets[1].onclose, null);
+    assert.equal(sockets[1].onerror, null);
+
+    messageHandlerAfterUnmount?.({
+      data: JSON.stringify(validEvent),
+    } as MessageEvent);
+
+    assert.equal(receivedEvents.length, 1);
   });
 
   it("reports accurate connection status transitions", async () => {

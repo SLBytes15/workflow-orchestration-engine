@@ -2,35 +2,31 @@
 
 ## 1. High-Level Architecture
 
+Current execution path (synchronous):
+
 React Client
     |
-    | HTTP / WebSocket
+    | Authenticated HTTP request
     v
-Express API
+Express API -> API-key authentication -> server-derived tenant
     |
     v
-Tenant Context
+Execution Service -> MongoDB: persist queued -> persist running
     |
     v
-Workflow Service
+Workflow graph runtime (inline in request)
+    |
+    +---- Registered task handlers
+    +---- Saga compensation checkpoints, when applicable
     |
     v
-MongoDB
+Persist checkpoints/terminal result -> MongoDB -> HTTP response / REST history and detail
 
-Future execution components:
+Future components (not implemented):
 
-Workflow Service
-    |
-    v
-Execution Engine
-    |
-    +---- Task Runner
-    |
-    +---- Saga Coordinator
-    |
+    +---- Worker / queue
     +---- Retry / DLQ
-    |
-    +---- Execution Events
+    +---- Durable execution events / multi-instance pub-sub
 
 
 ## 2. Major Components
@@ -55,38 +51,39 @@ workflow operations fail.
 Stores tenant-scoped application and workflow data.
 
 ### Real-Time Layer
-**Approved design:** The MVP adds best-effort WebSocket execution lifecycle
-notifications; REST remains the source of truth. See
+**Approved design, not implemented:** The MVP adds best-effort WebSocket
+execution lifecycle notifications; REST remains the source of truth. See
 [WebSocket Execution Updates](./websocket-execution-updates.md) for the
-approved contract and current implementation status. This layer is not
-implemented on the current branch.
+approved ticket/event contract and current implementation status.
 
 ## 3. Architecture Decisions
 
-The WebSocket MVP decisions are approved; other decisions remain open as noted
-below.
+The WebSocket MVP contract and synchronous Week 3 execution decision are
+approved. Retry execution, worker/queue architecture, and several production
+authentication policies remain outside this implemented slice.
 
 ## 4. Open Technical Decisions
 
-- Tenant isolation approach
+- Live-database verification of tenant isolation and guarantees beyond current REST route scoping
 - Queue/execution architecture
 - Worker architecture
-- Authentication/API-key design
-- WebSocket ticket response and handshake transport
-
-
-- Header: x-api-key
-- Missing or invalid key: 401 Unauthorized
-- Successful resolution: attach tenantId and tenantKey to the request context
-- Resolver: temporary in-memory lookup for development only
-- /api/health: public
-- Future work: MongoDB-backed lookup, secure API-key verification, and rate limiting
-
- member/saransh
+- Production API-key lifecycle and operational policy
+- Retry persistence, idempotency, and DLQ policy
 
 ### Tenant Request Context and Authorization
 
-The `x-tenant-id` middleware validates the presence and format of a tenant identifier and makes it available to downstream handlers.
+Workflow and execution REST routes require `x-api-key`. The database-backed
+tenant resolver hashes the key for lookup, rejects inactive, revoked, or
+expired keys and inactive or missing tenants, and returns the persisted
+tenant ID. Missing or unresolved keys receive `401`; authenticated request
+context contains the server-resolved tenant ID, not a client-selected tenant.
+
+`/api/health` does not require authentication (the `/api` rate limiter still
+applies). The legacy `/api/test-tenant` endpoint uses the development-only
+in-memory resolver and is not the authentication path for workflow or
+execution routes. The separate `x-tenant-id` context middleware only checks
+the syntax of a client-supplied tenant identifier; it does not authenticate
+or authorize access.
 
 A client-supplied tenant ID is not proof of authorization. Before tenant data is accessed, tenant identity must be bound to a verified API key or authenticated session. Database queries must also enforce tenant isolation.
 

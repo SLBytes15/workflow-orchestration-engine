@@ -36,6 +36,31 @@ const PAGE_SIZE = 20
 function getId(item: CreatedWorkflow): string {
   return String(item.id ?? item._id ?? '')
 }
+function sanitizeErrorMessage(message: string): string {
+  const cleaned = message
+    .replace(/https?:\/\/\S+/gi, '[technical details hidden]')
+    .replace(/\b(?:at\s+\S+.*)/gi, '[technical details hidden]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+  if (!cleaned) {
+    return 'An unexpected error occurred.'
+  }
+
+  return cleaned.length > 240
+    ? `${cleaned.slice(0, 237)}...`
+    : cleaned
+}
+
+function getErrorText(error: WorkflowExecution['error']): string {
+  const message =
+    typeof error === 'string'
+      ? error
+      : error?.message ?? ''
+
+  return sanitizeErrorMessage(message)
+}
 
 function getStatusLabel(
   status: WorkflowExecution['status'] | string,
