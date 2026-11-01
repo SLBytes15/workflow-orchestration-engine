@@ -87,10 +87,16 @@ type WebSocketLike = {
   close: () => void;
 };
 
-type RealtimeOptions = {
+export type RealtimeConnectionStatus =
+  | "connecting"
+  | "connected"
+  | "disconnected";
+
+export type RealtimeOptions = {
   apiKey: string;
   onEvent: (event: ExecutionUpdateEvent) => void;
   onReconnect: () => void;
+  onStatusChange?: (status: RealtimeConnectionStatus) => void;
   webSocketFactory?: (url: string) => WebSocketLike;
   requestTicket?: typeof createExecutionWsTicket;
   buildUrl?: typeof getExecutionWebSocketUrl;
@@ -141,6 +147,8 @@ export function connectExecutionUpdates(
   async function connect() {
     if (stopped) return;
 
+    options.onStatusChange?.("connecting");
+
     try {
       // Every connection attempt obtains a fresh single-use ticket.
       const ticket = await requestTicket(options.apiKey);
@@ -159,11 +167,13 @@ export function connectExecutionUpdates(
       socket = currentSocket;
 
       currentSocket.onopen = () => {
-        if (stopped) return;
+        if (stopped || socket !== currentSocket) return;
 
         const isReconnect = connectedBefore;
         connectedBefore = true;
         reconnectAttempt = 0;
+
+        options.onStatusChange?.("connected");
 
         if (isReconnect) {
           options.onReconnect();
@@ -171,6 +181,8 @@ export function connectExecutionUpdates(
       };
 
       currentSocket.onmessage = (message) => {
+        if (stopped || socket !== currentSocket) return;
+
         const event = parseExecutionUpdateEvent(message.data);
 
         if (event) {
@@ -179,17 +191,21 @@ export function connectExecutionUpdates(
       };
 
       currentSocket.onclose = () => {
-        if (socket === currentSocket) {
-          socket = null;
-        }
+        if (stopped || socket !== currentSocket) return;
 
+        socket = null;
+        options.onStatusChange?.("disconnected");
         scheduleReconnect();
       };
 
       currentSocket.onerror = () => {
+        if (stopped || socket !== currentSocket) return;
+
         currentSocket.close();
       };
     } catch {
+      if (stopped) return;
+      options.onStatusChange?.("disconnected");
       scheduleReconnect();
     }
   }
@@ -212,5 +228,7 @@ export function connectExecutionUpdates(
       socket.close();
       socket = null;
     }
+
+    options.onStatusChange?.("disconnected");
   };
 }
