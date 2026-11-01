@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import test from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import { Types } from "mongoose";
@@ -2084,4 +2084,607 @@ test("keeps retry and timeoutMs out of task and compensation payloads", async ()
   assert.equal(updates[0].update.status, "running");
   assert.equal(updates[updates.length - 1].update.status, "compensated");
   assert.ok(updates.some((entry) => entry.update.status === "compensating"));
+});
+
+test("global executions: retrieves executions scoped to tenant", async () => {
+  let capturedFilter: Record<string, unknown> | undefined;
+  let capturedLimit: number | undefined;
+
+  const mockRecords = [
+    {
+      _id: new Types.ObjectId("000000000000000000000002"),
+      tenantId,
+      workflowId,
+      status: "completed",
+      createdAt: new Date("2026-10-21T10:00:00.000Z"),
+    },
+    {
+      _id: new Types.ObjectId("000000000000000000000001"),
+      tenantId,
+      workflowId,
+      status: "running",
+      createdAt: new Date("2026-10-21T09:00:00.000Z"),
+    },
+  ];
+
+  const service = createExecutionService(
+    makeDependencies({
+      findGlobalHistory: async (filter, limit) => {
+        capturedFilter = filter;
+        capturedLimit = limit;
+        return mockRecords;
+      },
+    }),
+  );
+
+  const result = await service.listGlobalExecutions(tenantId, { limit: 10 });
+  assert.equal(capturedLimit, 10);
+  assert.deepEqual(capturedFilter, { tenantId });
+  assert.equal(result.executions.length, 2);
+  assert.equal(result.pagination.hasMore, false);
+  assert.equal(result.pagination.nextCursor, null);
+});
+
+test("global executions: applies all seven execution statuses correctly", async () => {
+  const statuses = [
+    "queued",
+    "running",
+    "completed",
+    "failed",
+    "compensating",
+    "compensated",
+    "compensation_failed",
+  ];
+
+  for (const status of statuses) {
+    let capturedFilter: Record<string, unknown> | undefined;
+    const service = createExecutionService(
+      makeDependencies({
+        findGlobalHistory: async (filter) => {
+          capturedFilter = filter;
+          return [];
+        },
+      }),
+    );
+
+    await service.listGlobalExecutions(tenantId, { status });
+    assert.deepEqual(capturedFilter, {
+      $and: [{ tenantId }, { status }],
+    });
+  }
+});
+
+test("global executions: filters by workflowId and executionId", async () => {
+  const targetWorkflowId = new Types.ObjectId("0000000000000000000000aa");
+  const targetExecutionId = new Types.ObjectId("0000000000000000000000bb");
+  let capturedFilter: Record<string, unknown> | undefined;
+
+  const service = createExecutionService(
+    makeDependencies({
+      findGlobalHistory: async (filter) => {
+        capturedFilter = filter;
+        return [];
+      },
+    }),
+  );
+
+  await service.listGlobalExecutions(tenantId, {
+    workflowId: targetWorkflowId.toString(),
+    executionId: targetExecutionId.toString(),
+  });
+
+  assert.deepEqual(capturedFilter, {
+    $and: [
+      { tenantId },
+      { workflowId: targetWorkflowId },
+      { _id: targetExecutionId },
+    ],
+  });
+});
+
+test("global executions: filters by valid date range", async () => {
+  const from = "2026-10-01T00:00:00.000Z";
+  const to = "2026-10-31T23:59:59.999Z";
+  let capturedFilter: Record<string, unknown> | undefined;
+
+  const service = createExecutionService(
+    makeDependencies({
+      findGlobalHistory: async (filter) => {
+        capturedFilter = filter;
+        return [];
+      },
+    }),
+  );
+
+  await service.listGlobalExecutions(tenantId, { from, to });
+
+  assert.deepEqual(capturedFilter, {
+    $and: [
+      { tenantId },
+      {
+        createdAt: {
+          $gte: new Date(from),
+          $lte: new Date(to),
+        },
+      },
+    ],
+  });
+});
+
+test("global executions: rejects invalid parameters", async () => {
+  const service = createExecutionService(makeDependencies());
+
+  // Invalid status
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { status: "unknown_status" }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // Invalid workflowId
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { workflowId: "invalid-id" }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // Invalid executionId
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { executionId: "invalid-id" }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // Invalid from date
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { from: "not-a-date" }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // Invalid to date
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { to: "not-a-date" }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // from > to
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, {
+      from: "2026-10-31T00:00:00.000Z",
+      to: "2026-10-01T00:00:00.000Z",
+    }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // Limit < 1
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { limit: 0 }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // Limit > 100
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { limit: 101 }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // Fractional limit
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { limit: 2.5 }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+});
+
+test("global executions: compound cursor encodes createdAt and _id and constructs next-page filter", async () => {
+  const id1 = new Types.ObjectId("000000000000000000000003");
+  const id2 = new Types.ObjectId("000000000000000000000002");
+  const id3 = new Types.ObjectId("000000000000000000000001");
+  const sharedDate = new Date("2026-10-21T10:00:00.000Z");
+
+  const records = [
+    { _id: id1, tenantId, createdAt: sharedDate },
+    { _id: id2, tenantId, createdAt: sharedDate },
+    { _id: id3, tenantId, createdAt: new Date("2026-10-21T09:00:00.000Z") },
+  ];
+
+  let queryCount = 0;
+  let capturedFilter: Record<string, unknown> | undefined;
+
+  const service = createExecutionService(
+    makeDependencies({
+      findGlobalHistory: async (filter, limit) => {
+        queryCount += 1;
+        capturedFilter = filter;
+        assert.equal(limit, 2);
+        return records;
+      },
+    }),
+  );
+
+  // First page with limit 2
+  const firstPage = await service.listGlobalExecutions(tenantId, { limit: 2 });
+  assert.equal(firstPage.executions.length, 2);
+  assert.equal(firstPage.pagination.hasMore, true);
+  assert.ok(firstPage.pagination.nextCursor);
+
+  // Second page request with compound cursor
+  await service.listGlobalExecutions(tenantId, {
+    limit: 2,
+    cursor: firstPage.pagination.nextCursor,
+  });
+
+  assert.equal(queryCount, 2);
+  // Verify next page filter includes the compound condition:
+  // { $or: [ { createdAt: { $lt: cursorDate } }, { createdAt: cursorDate, _id: { $lt: cursorId } } ] }
+  assert.deepEqual(capturedFilter, {
+    $and: [
+      { tenantId },
+      {
+        $or: [
+          { createdAt: { $lt: sharedDate } },
+          { createdAt: sharedDate, _id: { $lt: id2 } },
+        ],
+      },
+    ],
+  });
+});
+
+test("global executions: cursor validation rejects malformed cursors", async () => {
+  const service = createExecutionService(makeDependencies());
+
+  // Non-base64 / non-json
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { cursor: "not-a-cursor" }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // Valid base64 but invalid JSON structure
+  const badJsonCursor = Buffer.from(JSON.stringify("string-payload")).toString("base64url");
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { cursor: badJsonCursor }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // Missing or malformed timestamp
+  const badDateCursor = Buffer.from(
+    JSON.stringify({ createdAt: "not-a-date", id: "000000000000000000000001" }),
+  ).toString("base64url");
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { cursor: badDateCursor }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+
+  // Malformed ID
+  const badIdCursor = Buffer.from(
+    JSON.stringify({ createdAt: new Date().toISOString(), id: "not-an-id" }),
+  ).toString("base64url");
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId, { cursor: badIdCursor }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR",
+  );
+});
+
+test("global executions: database errors are propagated cleanly", async () => {
+  const service = createExecutionService(
+    makeDependencies({
+      findGlobalHistory: async () => {
+        throw new Error("Database connection lost");
+      },
+    }),
+  );
+
+  await assert.rejects(
+    service.listGlobalExecutions(tenantId),
+    (error: unknown) => error instanceof Error && error.message === "Database connection lost",
+  );
+});
+
+test("execution analytics: aggregates counts for all seven statuses and computes rates", async () => {
+  let capturedPipeline: any[] = [];
+  const service = createExecutionService(
+    makeDependencies({
+      aggregateExecutions: async (pipeline) => {
+        capturedPipeline = pipeline;
+        return [
+          {
+            total: 100,
+            completed: 60,
+            failed: 15,
+            compensated: 4,
+            compensation_failed: 1,
+            running: 12,
+            compensating: 3,
+            queued: 5,
+            totalDurationMs: 120000,
+            durationCount: 60,
+          },
+        ];
+      },
+    }),
+  );
+
+  const result = await service.getExecutionSummary(tenantId);
+  assert.deepEqual(result.summary, {
+    total: 100,
+    completed: 60,
+    failed: 15,
+    compensated: 4,
+    compensationFailed: 1,
+    unsuccessful: 20,
+    running: 12,
+    compensating: 3,
+    queued: 5,
+    successRate: 75.0,
+    failureRate: 25.0,
+    avgDurationMs: 2000,
+  });
+  assert.deepEqual(result.filter, {
+    workflowId: null,
+    from: null,
+    to: null,
+  });
+  assert.deepEqual(capturedPipeline[0], { $match: { tenantId } });
+});
+
+test("execution analytics: returns zero counts and null duration for an empty dataset", async () => {
+  const service = createExecutionService(
+    makeDependencies({
+      aggregateExecutions: async () => [],
+    }),
+  );
+
+  const result = await service.getExecutionSummary(tenantId);
+  assert.deepEqual(result.summary, {
+    total: 0,
+    completed: 0,
+    failed: 0,
+    compensated: 0,
+    compensationFailed: 0,
+    unsuccessful: 0,
+    running: 0,
+    compensating: 0,
+    queued: 0,
+    successRate: 0,
+    failureRate: 0,
+    avgDurationMs: null,
+  });
+});
+
+test("execution analytics: handles zero terminal executions without division by zero", async () => {
+  const service = createExecutionService(
+    makeDependencies({
+      aggregateExecutions: async () => [
+        {
+          total: 5,
+          completed: 0,
+          failed: 0,
+          compensated: 0,
+          compensation_failed: 0,
+          running: 3,
+          compensating: 0,
+          queued: 2,
+          totalDurationMs: 0,
+          durationCount: 0,
+        },
+      ],
+    }),
+  );
+
+  const result = await service.getExecutionSummary(tenantId);
+  assert.equal(result.summary.total, 5);
+  assert.equal(result.summary.running, 3);
+  assert.equal(result.summary.queued, 2);
+  assert.equal(result.summary.successRate, 0);
+  assert.equal(result.summary.failureRate, 0);
+  assert.equal(result.summary.avgDurationMs, null);
+});
+
+test("execution analytics: applies workflowId filter accurately", async () => {
+  let capturedPipeline: any[] = [];
+  const service = createExecutionService(
+    makeDependencies({
+      aggregateExecutions: async (pipeline) => {
+        capturedPipeline = pipeline;
+        return [];
+      },
+    }),
+  );
+
+  const filterWfId = "0123456789abcdef01234567";
+  const result = await service.getExecutionSummary(tenantId, { workflowId: filterWfId });
+  assert.equal(result.filter.workflowId, filterWfId);
+  assert.deepEqual(capturedPipeline[0], {
+    $match: {
+      $and: [
+        { tenantId },
+        { workflowId: new Types.ObjectId(filterWfId) },
+      ],
+    },
+  });
+});
+
+test("execution analytics: applies date filters accurately", async () => {
+  let capturedPipeline: any[] = [];
+  const service = createExecutionService(
+    makeDependencies({
+      aggregateExecutions: async (pipeline) => {
+        capturedPipeline = pipeline;
+        return [];
+      },
+    }),
+  );
+
+  const fromStr = "2026-10-01T00:00:00.000Z";
+  const toStr = "2026-10-31T23:59:59.999Z";
+  const result = await service.getExecutionSummary(tenantId, { from: fromStr, to: toStr });
+  assert.equal(result.filter.from, fromStr);
+  assert.equal(result.filter.to, toStr);
+  assert.deepEqual(capturedPipeline[0], {
+    $match: {
+      $and: [
+        { tenantId },
+        {
+          createdAt: {
+            $gte: new Date(fromStr),
+            $lte: new Date(toStr),
+          },
+        },
+      ],
+    },
+  });
+});
+
+test("execution analytics: applies combined workflow and date filters", async () => {
+  let capturedPipeline: any[] = [];
+  const service = createExecutionService(
+    makeDependencies({
+      aggregateExecutions: async (pipeline) => {
+        capturedPipeline = pipeline;
+        return [];
+      },
+    }),
+  );
+
+  const filterWfId = "0123456789abcdef01234567";
+  const fromStr = "2026-10-01T00:00:00.000Z";
+  const toStr = "2026-10-31T23:59:59.999Z";
+  await service.getExecutionSummary(tenantId, { workflowId: filterWfId, from: fromStr, to: toStr });
+
+  assert.deepEqual(capturedPipeline[0], {
+    $match: {
+      $and: [
+        { tenantId },
+        { workflowId: new Types.ObjectId(filterWfId) },
+        {
+          createdAt: {
+            $gte: new Date(fromStr),
+            $lte: new Date(toStr),
+          },
+        },
+      ],
+    },
+  });
+});
+
+test("execution analytics: rejects invalid workflowId", async () => {
+  const service = createExecutionService(makeDependencies());
+  await assert.rejects(
+    service.getExecutionSummary(tenantId, { workflowId: "invalid-id" }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR" &&
+      error.message === "workflowId must be a valid ID",
+  );
+});
+
+test("execution analytics: rejects invalid date formats", async () => {
+  const service = createExecutionService(makeDependencies());
+  await assert.rejects(
+    service.getExecutionSummary(tenantId, { from: "not-a-date" }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR" &&
+      error.message === "from must be a valid ISO date string",
+  );
+  await assert.rejects(
+    service.getExecutionSummary(tenantId, { to: "not-a-date" }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR" &&
+      error.message === "to must be a valid ISO date string",
+  );
+});
+
+test("execution analytics: rejects from date greater than to date", async () => {
+  const service = createExecutionService(makeDependencies());
+  await assert.rejects(
+    service.getExecutionSummary(tenantId, {
+      from: "2026-10-15T00:00:00.000Z",
+      to: "2026-10-10T00:00:00.000Z",
+    }),
+    (error: unknown) =>
+      error instanceof ExecutionServiceError &&
+      error.statusCode === 400 &&
+      error.code === "VALIDATION_ERROR" &&
+      error.message === "from date must be before or equal to to date",
+  );
+});
+
+test("execution analytics: preserves tenant isolation in match query", async () => {
+  let capturedTenantId: any;
+  const service = createExecutionService(
+    makeDependencies({
+      aggregateExecutions: async (pipeline) => {
+        capturedTenantId = (pipeline[0] as any).$match.tenantId;
+        return [];
+      },
+    }),
+  );
+
+  const customTenant = new Types.ObjectId();
+  await service.getExecutionSummary(customTenant);
+  assert.equal(String(capturedTenantId), String(customTenant));
+});
+
+test("execution analytics: pipeline duration conditions exclude missing or invalid timestamps", async () => {
+  let capturedPipeline: any[] = [];
+  const service = createExecutionService(
+    makeDependencies({
+      aggregateExecutions: async (pipeline) => {
+        capturedPipeline = pipeline;
+        return [];
+      },
+    }),
+  );
+
+  await service.getExecutionSummary(tenantId);
+  const groupStage = (capturedPipeline[1] as any).$group;
+  assert.ok(groupStage.totalDurationMs);
+  assert.ok(groupStage.durationCount);
+
+  const durationCond = groupStage.totalDurationMs.$sum.$cond[0].$and;
+  assert.deepEqual(durationCond, [
+    { $ne: ["$startedAt", null] },
+    { $ne: ["$completedAt", null] },
+    { $gte: ["$completedAt", "$startedAt"] },
+  ]);
 });

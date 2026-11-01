@@ -87,10 +87,16 @@ type WebSocketLike = {
   close: () => void;
 };
 
-type RealtimeOptions = {
+export type RealtimeConnectionStatus =
+  | "connecting"
+  | "connected"
+  | "disconnected";
+
+export type RealtimeOptions = {
   apiKey: string;
   onEvent: (event: ExecutionUpdateEvent) => void;
   onReconnect: () => void;
+  onStatusChange?: (status: RealtimeConnectionStatus) => void;
   webSocketFactory?: (url: string) => WebSocketLike;
   requestTicket?: typeof createExecutionWsTicket;
   buildUrl?: typeof getExecutionWebSocketUrl;
@@ -141,6 +147,8 @@ export function connectExecutionUpdates(
   async function connect() {
     if (stopped) return;
 
+    options.onStatusChange?.("connecting");
+
     try {
       // Every connection attempt obtains a fresh single-use ticket.
       const ticket = await requestTicket(options.apiKey);
@@ -165,6 +173,8 @@ export function connectExecutionUpdates(
         connectedBefore = true;
         reconnectAttempt = 0;
 
+        options.onStatusChange?.("connected");
+
         if (isReconnect) {
           options.onReconnect();
         }
@@ -184,6 +194,7 @@ export function connectExecutionUpdates(
         if (stopped || socket !== currentSocket) return;
 
         socket = null;
+        options.onStatusChange?.("disconnected");
         scheduleReconnect();
       };
 
@@ -193,6 +204,8 @@ export function connectExecutionUpdates(
         currentSocket.close();
       };
     } catch {
+      if (stopped) return;
+      options.onStatusChange?.("disconnected");
       scheduleReconnect();
     }
   }
@@ -215,5 +228,7 @@ export function connectExecutionUpdates(
       socket.close();
       socket = null;
     }
+
+    options.onStatusChange?.("disconnected");
   };
 }
