@@ -519,22 +519,63 @@ Source and test inspection is not a claim that shutdown was exercised live.
 
 ## H. Backend QA evidence
 
-The following existing test files were inspected, not run during this task:
+The source currently mounts `executionWsTicketRoutes` at `/api/executions` in
+`backend/src/app.ts`. `backend/src/index.ts` uses `app.listen` and passes the
+resulting server to `attachWebSocket`; its default attachment calls
+`executionEventHub.attach(server)`. This establishes the two wiring facts by
+source inspection, not by a live startup test. The `index.test.ts` case below
+checks the injected startup seam with a fake server, not a deployed listener.
 
-| Test file | Evidence in test source | Test environment |
-|---|---|---|
-| [backend/src/routes/executionWsTicket.routes.test.ts](../backend/src/routes/executionWsTicket.routes.test.ts) | Authentication, response fields, server-derived tenant, and ticket route behavior | Injected resolver/ticket dependencies |
-| [backend/src/services/executionTicket.service.test.ts](../backend/src/services/executionTicket.service.test.ts) | Random ticket format, TTL/expiry boundary, single use, and invalid input | In-memory ticket service and controlled clock |
-| [backend/src/services/executionWebSocket.test.ts](../backend/src/services/executionWebSocket.test.ts) | Handshake rejection, tenant isolation, event mapping/payload, cleanup, and send failures | Real in-process WebSocket sockets |
-| [backend/src/services/executionRealtime.integration.test.ts](../backend/src/services/executionRealtime.integration.test.ts) | HTTP/WebSocket client-server path and execution event flow | In-process; injected in-memory persistence, not MongoDB |
-| [backend/src/services/execution.service.test.ts](../backend/src/services/execution.service.test.ts) | Persistence-before-notify and notifier-failure isolation | Fakes/injected persistence |
-| [backend/src/index.test.ts](../backend/src/index.test.ts) | WebSocket attachment and shutdown ordering | Fake server/watcher dependencies |
+The six requested test files were inspected. The following exact cases and
+limitations describe what their source covers; they do not turn automated
+coverage into manual end-to-end verification.
+
+| Test file | Exact test cases / behavior | Manual checklist support | Test setup and boundary |
+|---|---|---|---|
+| [backend/src/routes/executionWsTicket.routes.test.ts](../backend/src/routes/executionWsTicket.routes.test.ts) | `rejects a ticket request without an API key`; `rejects a ticket request with an unknown API key`; `issues a ticket bound to the authenticated tenant only`; `ignores a client-supplied tenant ID in the request body`; `binds each ticket to its own tenant across two API keys` | 1, 5; also confirms auth rejection before ticket creation | Real in-process Express listener and HTTP `fetch`; injected resolver and in-memory ticket service. The test constructs its own router app, so it does not prove `app.ts` route registration. |
+| [backend/src/services/executionTicket.service.test.ts](../backend/src/services/executionTicket.service.test.ts) | `issues a 32-byte base64url ticket bound to the tenant`; `reports the agreed 60-second expiry as an ISO timestamp`; `does not repeat ticket values across issue calls`; `accepts a ticket immediately before expiry and rejects it at expiry`; `rejects a reused ticket on the second redemption`; `drops an expired ticket instead of leaving it redeemable`; `rejects missing, empty and non-string tickets without throwing`; `purges expired tickets when a new ticket is issued`; `clear() removes every stored ticket` | 1–5 | In-memory ticket service; expiry cases use a controlled clock. No database or external service. |
+| [backend/src/services/executionWebSocket.test.ts](../backend/src/services/executionWebSocket.test.ts) | `rejects a handshake without a ticket`; `rejects a handshake with an unknown ticket`; `accepts a single-use ticket and registers the socket for its tenant`; `delivers an event to the owning tenant only`; `delivers an event to every socket of the owning tenant`; `removes a closed socket from the tenant registry`; `publishing without any connected socket is a no-op`; `close() terminates sockets and clears the registry`; `attach() reuses the existing server instead of opening a second listener`; `maps each persisted status to the approved event type`; `publishes the approved envelope with an ISO timestamp`; `does not publish a compensated status without an approved mapping`; `never throws when the publisher itself fails` | 3–7, 9 (partial) | Real WebSocket clients and ephemeral in-process HTTP servers; in-memory tickets. The final case makes the publisher throw; it does not simulate a failing `socket.send` callback. No persistence or external service. |
+| [backend/src/services/executionRealtime.integration.test.ts](../backend/src/services/executionRealtime.integration.test.ts) | `streams persisted execution transitions to the owning tenant only` | 5–8 | Real in-process WebSocket server/client and execution service, with injected persistence functions returning records in memory. Despite the test name/comment, it does not use MongoDB or prove live persistence. |
+| [backend/src/services/execution.service.test.ts](../backend/src/services/execution.service.test.ts) | `notifies each persisted state only after the write succeeded`; `publishes the persisted failed status for a terminal failure`; `does not notify a terminal state when the terminal write is unconfirmed`; `keeps the execution outcome when the notifier throws` | 8, 9 | Execution service with fake/injected persistence and an injected notifier. Does not execute MongoDB conditional updates or an actual failing socket transport. |
+| [backend/src/index.test.ts](../backend/src/index.test.ts) | `attaches execution updates after listen and closes them during shutdown` | Wiring context for 6; does not itself execute a client connection | Fake server, watcher, and WebSocket attach callback. Verifies the callback receives the fake listener after `listen`; it does not instantiate the real WebSocket server. |
 
 **MEMBER-REPORTED, NOT INDEPENDENTLY REPRODUCED — Backend (Nithin):**
 365/365 backend tests and the backend build passed; `git diff --check` was
 reported clean. These results were not personally rerun. The WebSocket unit
 and in-process integration tests use fake/in-memory persistence. No live
 MongoDB or deployed end-to-end test was confirmed.
+
+**Targeted backend automated test run — 2 November 2026:** The earlier
+missing-`ws` test-loading blocker was resolved by installing the existing
+lockfile versions `ws@8.22.0` and `@types/ws@8.18.2`. The install did not
+change `backend/package.json` or `backend/package-lock.json`. npm reported an
+`esbuild` postinstall warning, but it did not prevent test execution.
+
+From `backend`, the following command exited **0**:
+
+```powershell
+.\node_modules\.bin\tsx.cmd --test src\routes\executionWsTicket.routes.test.ts src\services\executionTicket.service.test.ts src\services\executionWebSocket.test.ts src\services\executionRealtime.integration.test.ts src\services\execution.service.test.ts src\index.test.ts
+```
+
+| Test file | Result |
+|---|---:|
+| `src/routes/executionWsTicket.routes.test.ts` | 5 passed |
+| `src/services/executionTicket.service.test.ts` | 9 passed |
+| `src/services/executionWebSocket.test.ts` | 13 passed |
+| `src/services/executionRealtime.integration.test.ts` | 1 passed |
+| `src/services/execution.service.test.ts` | 32 passed |
+| `src/index.test.ts` | 8 passed |
+| **Total** | **68 passed, 0 failed, 0 skipped; exit code 0** |
+
+All six files loaded and executed. Complete TAP output was captured at
+`mahak-ws-targeted-tests-20261102.txt`. The tests used in-process HTTP and
+WebSocket listeners, injected/fake persistence or the in-memory ticket
+service, and fake startup dependencies as described above; no shared
+database, Atlas, production, or external service was used. In particular,
+the realtime integration test's persistence functions are in-memory fakes.
+This result is automated test evidence only: it is not manual E2E verification
+and does not demonstrate live MongoDB persistence or a deployed WebSocket
+integration.
 
 ## I. Frontend QA evidence
 
@@ -571,33 +612,196 @@ unconfirmed.
 
 ## K. Manual end-to-end checklist
 
-All 14 approved-isolated-environment checklist items in the historical
-investigation above remain **NOT RUN**. They have not been independently
-executed. Do not run experimental writes against shared MongoDB Atlas M0.
+The earlier 14-item list in the historical investigation is superseded by
+these ten traceable scenarios. **Every scenario is NOT RUN**; the actual-result
+field is intentionally unfilled. Execute only in an approved, isolated
+environment with disposable tenant/workflow data and an isolated MongoDB
+replica set if the full backend startup requires one. Never use a shared
+database, production, or Atlas M0 experimental writes. Do not capture API
+keys or reusable ticket values in evidence; redact credentials and ticket
+strings.
+
+### Manual test WS-01 — Obtain a valid WebSocket ticket
+
+- **Preconditions:** Isolated backend is available; a valid API key resolves to
+  a disposable test tenant; no shared or production credentials are used.
+- **Manual execution steps:** Send `POST /api/executions/ws-ticket` with the
+  `X-API-Key` header. Record the HTTP status, response field names, and
+  `expiresAt`; redact the ticket value.
+- **Expected result:** HTTP 200; response contains `ticket` and `expiresAt`;
+  expiry parses as a future timestamp. The ticket is a temporary credential.
+- **Actual result:** Not recorded — not executed.
+- **Status:** NOT RUN
+- **Evidence required:** Sanitized request/response, timestamp, and server
+  environment identifier; redact API key and ticket.
+
+### Manual test WS-02 — Reject an expired ticket
+
+- **Preconditions:** Isolated WebSocket endpoint; a valid ticket can be
+  obtained; expiry time is observable.
+- **Manual execution steps:** Obtain a ticket, wait until its advertised
+  expiry has passed, then connect to `/ws/executions?ticket=<ticket>`.
+- **Expected result:** The handshake is rejected (current source closes with
+  code `4401`); the connection is not registered and receives no execution
+  event.
+- **Actual result:** Not recorded — not executed.
+- **Status:** NOT RUN
+- **Evidence required:** Sanitized connection attempt, close code/reason,
+  timestamp relative to `expiresAt`, and server logs; redact ticket.
+
+### Manual test WS-03 — Reject a reused ticket
+
+- **Preconditions:** Isolated endpoint and a fresh valid ticket.
+- **Manual execution steps:** Connect once with the ticket and confirm the
+  first connection opens. Close it, then attempt a second connection using
+  exactly the same ticket.
+- **Expected result:** First connection opens; the second is rejected with
+  close code `4401`.
+- **Actual result:** Not recorded — not executed.
+- **Status:** NOT RUN
+- **Evidence required:** Sanitized timestamps and outcomes for both
+  handshakes; redact ticket.
+
+### Manual test WS-04 — Reject an invalid ticket
+
+- **Preconditions:** Isolated endpoint; no test credential is embedded in the
+  URL other than the deliberately invalid placeholder.
+- **Manual execution steps:** Connect to `/ws/executions?ticket=invalid-test-value`.
+- **Expected result:** Handshake is rejected with close code `4401`; no socket
+  is registered and no event is received.
+- **Actual result:** Not recorded — not executed.
+- **Status:** NOT RUN
+- **Evidence required:** Sanitized URL, close code/reason, and server log
+  correlation; do not record any valid ticket.
+
+### Manual test WS-05 — Verify tenant-bound ticket behaviour
+
+- **Preconditions:** Two disposable tenants with separate valid API keys and
+  executions; two isolated WebSocket clients.
+- **Manual execution steps:** Obtain one ticket per API key; connect both
+  clients; trigger an execution for tenant A, then tenant B. If testing
+  request-body tampering, submit a conflicting `tenantId` only in the
+  isolated ticket request body.
+- **Expected result:** Each ticket is bound to the tenant resolved from its
+  API key, not a client-supplied tenant ID. Each client receives only its
+  own tenant's events.
+- **Actual result:** Not recorded — not executed.
+- **Status:** NOT RUN
+- **Evidence required:** Sanitized tenant identifiers, API responses,
+  per-client event captures, and server-side tenant correlation.
+
+### Manual test WS-06 — Connect with the approved ticket query parameter
+
+- **Preconditions:** Isolated backend and a fresh valid ticket obtained via
+  `POST /api/executions/ws-ticket`.
+- **Manual execution steps:** Open `ws://<host>/ws/executions?ticket=<encoded-ticket>`
+  (or `wss://` for TLS), using URL query parameter `ticket`. Do not put an API
+  key or tenant ID in the WebSocket URL. Confirm connection establishment.
+- **Expected result:** A valid ticket opens the socket on `/ws/executions`;
+  credentials other than the short-lived ticket are absent from the URL.
+- **Actual result:** Not recorded — not executed.
+- **Status:** NOT RUN
+- **Evidence required:** Redacted WebSocket request URL and handshake result;
+  redact the ticket query value.
+
+### Manual test WS-07 — Observe event names and payload structure
+
+- **Preconditions:** Connected tenant-scoped socket; isolated workflow that
+  produces observable running and terminal transitions.
+- **Manual execution steps:** Trigger an execution and capture the received
+  frames. Compare event names and fields with the contract below; separately
+  refresh REST for persisted compensation terminal states.
+- **Expected result:** Envelope is
+  `{ "type": "<event-name>", "data": { "executionId": "<string>", "workflowId": "<string>", "status": "<string>", "updatedAt": "<ISO-8601 string>" } }`.
+  `queued`, `running`, and `compensating` map to `execution.updated`;
+  `completed` maps to `execution.completed`; `failed` maps to
+  `execution.failed`. Initial queued creation is not published;
+  `compensated` and `compensation_failed` have no WebSocket event.
+- **Actual result:** Not recorded — not executed.
+- **Status:** NOT RUN
+- **Evidence required:** Redacted frame captures, matching REST execution
+  records, and timestamps.
+
+### Manual test WS-08 — Confirm publication follows persistence
+
+- **Preconditions:** Isolated backend with a way to correlate a persistence
+  acknowledgement and its subsequent notification for the same execution;
+  no shared database.
+- **Manual execution steps:** Trigger an execution while collecting
+  server-side persistence acknowledgement and notification evidence. Verify
+  each observed event corresponds to an acknowledged persisted transition;
+  where safely possible, exercise an unconfirmed update and verify no event
+  for that state is emitted.
+- **Expected result:** No event is published before its corresponding
+  persistence update is confirmed; an unconfirmed terminal write does not
+  emit a terminal event.
+- **Actual result:** Not recorded — not executed.
+- **Status:** NOT RUN
+- **Evidence required:** Correlated persistence-ack and publish/frame logs,
+  execution record read-back, and evidence for any unconfirmed-write case.
+  A later REST read by itself does not prove ordering.
+
+### Manual test WS-09 — Confirm socket send failure does not fail execution
+
+- **Preconditions:** Isolated environment with a controlled way to make the
+  test socket fail during delivery; a disposable workflow whose final status
+  can be checked through REST.
+- **Manual execution steps:** Connect the test socket, induce a send/connection
+  failure during an execution transition, and then query the execution
+  through REST.
+- **Expected result:** Execution processing and persistence retain their
+  normal outcome despite the socket failure; notification delivery is best
+  effort. This does not imply a retry or guaranteed delivery.
+- **Actual result:** Not recorded — not executed.
+- **Status:** NOT RUN
+- **Evidence required:** Socket failure evidence, server logs, and REST
+  read-back of the final execution status.
+
+### Manual test WS-10 — Reconnect and refresh authoritative execution data through REST
+
+- **Preconditions:** Isolated frontend/backend, valid API key, isolated
+  workflow, and browser network capture enabled.
+- **Manual execution steps:** Connect and observe execution history; disconnect
+  the socket; cause an execution transition while disconnected; allow the
+  client to reconnect; inspect the new ticket request and subsequent REST
+  history request; compare the refreshed response with the persisted record.
+- **Expected result:** Reconnection obtains a fresh ticket and reloads
+  authoritative execution history through REST, including state changes
+  missed while disconnected. REST remains the source of truth; no event replay
+  or exactly-once delivery is implied.
+- **Actual result:** Not recorded — not executed.
+- **Status:** NOT RUN
+- **Evidence required:** Redacted browser network capture for reconnect ticket
+  and REST history, socket lifecycle timestamps, and matching persisted
+  execution data.
 
 ## L. Implementation status matrix
 
 | Feature | Current status | Test/evidence status |
 |---|---|---|
-| Authenticated `POST /api/executions/ws-ticket`; `{ ticket, expiresAt }` response | Implemented — source verified | Route tests inspected; not run |
-| Random 32-byte ticket, 60-second expiry, single-use tenant binding | Implemented — source verified; in-memory and single-process | Ticket service tests inspected; not run |
-| `/ws/executions?ticket=...` handshake and tenant-scoped socket registry | Implemented — source verified | In-process WebSocket tests inspected; not run |
-| Event payload and status mapping | Implemented — source verified; initial queued creation and both compensation terminal statuses emit no event | WebSocket/persistence tests inspected; not run |
-| Publish after confirmed persistence | Implemented — source verified | Fake/in-memory persistence tests inspected; not run |
-| Socket send/notification failure isolation | Implemented — source verified | In-process/fake test coverage inspected; not run |
-| Frontend ticket request, URL, event parsing, reconnect, fresh ticket, REST refresh | Implemented — source verified on current branch | Four mock-based realtime tests inspected; not run |
+| Authenticated `POST /api/executions/ws-ticket`; `{ ticket, expiresAt }` response | Implemented — source verified | Five route test cases passed in the targeted attempt; see H for command and limits |
+| Random 32-byte ticket, 60-second expiry, single-use tenant binding | Implemented — source verified; in-memory and single-process | Nine ticket-service test cases passed in the targeted attempt; see H |
+| `/ws/executions?ticket=...` handshake and tenant-scoped socket registry | Implemented — source verified | 13 WebSocket tests passed; see H |
+| Event payload and status mapping | Implemented — source verified; initial queued creation and both compensation terminal statuses emit no event | WebSocket, realtime integration, and execution service tests passed; see H. Persistence in these tests is fake/in-memory. |
+| Publish after confirmed persistence | Implemented — source verified | Execution service tests passed with injected fake persistence; see H. Not a MongoDB persistence test. |
+| Socket send/notification failure isolation | Implemented — source verified | WebSocket and execution service tests passed; see H. Test cases do not establish live transport delivery. |
+| Frontend ticket request, URL, event parsing, reconnect, fresh ticket, REST refresh | Implemented — source verified on current branch | Four mock-based realtime tests inspected; not run in this task |
 | Event-name/status pairing validation | Mismatch — frontend does not enforce pairing | Source inspected; no matching validation test |
 | Stale-socket callback guards | Present in fetched `origin/member/swathi` commit `c468aef2a79e94b9e16079a3391bcf8260780d91`; not present on current `member/mahak` HEAD | Not verified on current branch |
 | Retry execution | Not implemented | Not applicable |
 | Durable replay, exactly-once delivery, multi-instance pub/sub | Not implemented / no guarantee | Not verified as runtime properties |
 | Live MongoDB/deployed end-to-end behavior | Not verified / not run | No live test evidence |
+| Six targeted backend WebSocket-related test files | Independently run 2 November 2026 | 68 passed, 0 failed, 0 skipped; exit code 0. No live MongoDB or deployed integration. |
 | Backend 365/365 tests and build; frontend 78 tests and build | Member-reported — not independently reproduced | Not personally run for this report |
 
 **Overall:** Backend and frontend WebSocket behavior described above is
-implemented in source on the current branch and has existing mock/in-process
-test coverage. This report independently inspected source and test files but
-did not execute tests, builds, or live end-to-end checks. Member-reported
-results are explicitly identified; all manual E2E checklist items remain
+implemented in source on the current branch and has existing automated
+mock/in-process test coverage. The six-file targeted backend test run on
+2 November 2026 passed (68 passed, 0 failed, 0 skipped; exit code 0) after
+the missing locked WebSocket dependencies were installed. This is not manual
+E2E verification and does not establish live MongoDB persistence or deployed
+integration. No build or live end-to-end check was run. Member-reported
+results are explicitly identified; all ten manual E2E checklist items remain
 **NOT RUN**.
 
 ## Latest backend verification update — 2026-11-02
