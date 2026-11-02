@@ -836,4 +836,125 @@ it("fails when numeric comparison operands are invalid", async () => {
     assert.equal(result.status, "completed");
     assert.equal(calls, 1);
   });
+
+  it("passes stable ActionExecutionContext with deterministic idempotencyKey to handlers", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "POST",
+      url: "https://example.test/idempotent",
+    };
+
+    let receivedContext: any = null;
+    const executionContext = {
+      executionId: "exec-abc-123",
+      workflowId: "wf-xyz-789",
+      tenantId: "tenant-999",
+    };
+
+    const result = await executeWorkflowGraph(
+      graph,
+      { approved: true },
+      {
+        taskActions: {
+          http: {
+            execute: async (_input, context) => {
+              receivedContext = context;
+              return { ok: true, output: { status: "created" } };
+            },
+          },
+        },
+      },
+      executionContext,
+    );
+
+    assert.equal(result.status, "completed");
+    assert.ok(receivedContext);
+    assert.equal(receivedContext.executionId, "exec-abc-123");
+    assert.equal(receivedContext.workflowId, "wf-xyz-789");
+    assert.equal(receivedContext.nodeId, "task-true");
+    assert.equal(receivedContext.tenantId, "tenant-999");
+    assert.equal(receivedContext.idempotencyKey, "exec_exec-abc-123_task-true");
+  });
+
+  it("emits forward checkpoints for completed nodes when enableForwardCheckpoints is true", async () => {
+    const graph = createGraph();
+    const checkpoints: any[] = [];
+
+    const executionContext = {
+      executionId: "exec-cp-1",
+      workflowId: "wf-cp-1",
+      tenantId: "tenant-1",
+      enableForwardCheckpoints: true,
+    };
+
+    const result = await executeWorkflowGraph(
+      graph,
+      { approved: true },
+      {
+        taskActions: {
+          http: {
+            execute: async () => ({ ok: true, output: { ok: true } }),
+          },
+        },
+      },
+      executionContext,
+      async (checkpoint) => {
+        checkpoints.push(structuredClone(checkpoint));
+      },
+    );
+
+    assert.equal(result.status, "completed");
+    assert.ok(checkpoints.length >= 3); // trigger, condition, task-true
+    assert.equal(checkpoints[0].stage, "forward");
+    assert.equal(checkpoints[0].status, "running");
+    assert.equal(checkpoints[0].nodeId, "trigger-1");
+  });
+
+  it("fails execution with FORWARD_CHECKPOINT_FAILED when forward checkpoint persistence fails", async () => {
+    const graph = createGraph();
+    const task = graph.nodes.find((node) => node.id === "task-true");
+    assert.ok(task);
+    task.data.config = {
+      action: "http",
+      method: "POST",
+      url: "https://example.test/charge",
+    };
+
+    let handlerExecuted = false;
+
+    const executionContext = {
+      executionId: "exec-cp-fail",
+      workflowId: "wf-cp-fail",
+      tenantId: "tenant-1",
+      enableForwardCheckpoints: true,
+    };
+
+    const result = await executeWorkflowGraph(
+      graph,
+      { approved: true },
+      {
+        taskActions: {
+          http: {
+            execute: async () => {
+              handlerExecuted = true;
+              return { ok: true, output: { charged: true } };
+            },
+          },
+        },
+      },
+      executionContext,
+      async (checkpoint) => {
+        if (checkpoint.nodeId === "task-true") {
+          throw new Error("MongoDB network timeout on forward checkpoint write");
+        }
+      },
+    );
+
+    assert.equal(result.status, "failed");
+    assert.equal(handlerExecuted, true); // External task DID execute!
+    assert.equal(result.error?.code, "FORWARD_CHECKPOINT_FAILED");
+  });
 });

@@ -40,8 +40,13 @@ export interface WorkflowNodeData {
 }
 
 
+export interface WorkflowExecutionPolicy {
+  enableForwardCheckpoints?: boolean;
+}
+
 export interface WorkflowGraph {
   version: 1;
+  executionPolicy?: WorkflowExecutionPolicy;
   nodes: Array<{
     id: string;
     type: WorkflowGraphNodeType;
@@ -311,6 +316,22 @@ export function validateWorkflowGraph(value: unknown): string[] {
 
     if (hasCycle) {
       errors.push("Graph must not contain directed cycles");
+    }
+  }
+
+  if ("executionPolicy" in value && value.executionPolicy !== undefined) {
+    if (!isRecord(value.executionPolicy)) {
+      errors.push("executionPolicy must be an object");
+    } else {
+      if (
+        "enableForwardCheckpoints" in value.executionPolicy &&
+        value.executionPolicy.enableForwardCheckpoints !== undefined &&
+        typeof value.executionPolicy.enableForwardCheckpoints !== "boolean"
+      ) {
+        errors.push(
+          "executionPolicy.enableForwardCheckpoints must be a boolean",
+        );
+      }
     }
   }
 

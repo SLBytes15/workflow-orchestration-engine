@@ -317,3 +317,37 @@ test("rejects a condition missing its false branch", () => {
     ),
   );
 });
+
+test("executionPolicy: accepts valid executionPolicy with boolean enableForwardCheckpoints", () => {
+  const graph = {
+    ...structuredClone(validGraph),
+    executionPolicy: { enableForwardCheckpoints: true },
+  };
+
+  const errors = validateWorkflowGraph(graph);
+  assert.deepEqual(errors, []);
+});
+
+test("executionPolicy: rejects non-object executionPolicy", () => {
+  const graph = {
+    ...structuredClone(validGraph),
+    executionPolicy: "not-an-object",
+  };
+
+  const errors = validateWorkflowGraph(graph);
+  assert.ok(errors.some((e) => e.includes("executionPolicy must be an object")));
+});
+
+test("executionPolicy: rejects non-boolean enableForwardCheckpoints", () => {
+  const graph = {
+    ...structuredClone(validGraph),
+    executionPolicy: { enableForwardCheckpoints: "true" },
+  };
+
+  const errors = validateWorkflowGraph(graph);
+  assert.ok(
+    errors.some((e) =>
+      e.includes("executionPolicy.enableForwardCheckpoints must be a boolean"),
+    ),
+  );
+});

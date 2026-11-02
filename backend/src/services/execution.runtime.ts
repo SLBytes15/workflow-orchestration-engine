@@ -29,8 +29,19 @@ export type ActionResult =
   | { ok: true; output?: unknown }
   | { ok: false; error: StructuredActionError };
 
+export interface ActionExecutionContext {
+  executionId: string;
+  workflowId: string;
+  nodeId: string;
+  tenantId: string;
+  idempotencyKey: string;
+}
+
 export interface RegisteredAction {
-  execute(input: ValidatedActionInput): Promise<ActionResult>;
+  execute(
+    input: ValidatedActionInput,
+    context?: ActionExecutionContext,
+  ): Promise<ActionResult>;
 }
 
 export interface CompensationContext {
@@ -64,14 +75,15 @@ export interface RuntimeExecutionContext {
   executionId: string;
   workflowId: string;
   tenantId: string;
+  enableForwardCheckpoints?: boolean;
 }
 
 export interface RuntimeExecutionCheckpoint {
-  status: "compensating";
-  stage: "pending" | "running" | "terminal";
+  status: "running" | "compensating";
+  stage: "forward" | "pending" | "running" | "terminal";
   nodeId?: string;
   nodeResults: RuntimeNodeResult[];
-  error: StructuredActionError;
+  error?: StructuredActionError;
 }
 
 export interface RuntimeNodeResult {
@@ -80,6 +92,8 @@ export interface RuntimeNodeResult {
   output?: unknown;
   error?: StructuredActionError;
   compensation?: RuntimeCompensationState;
+  startedAt?: Date | null;
+  completedAt?: Date | null;
 }
 
 export interface RuntimeExecutionResult {
@@ -437,9 +451,10 @@ async function invokeAction(
   action: RegisteredAction,
   input: ValidatedActionInput,
   timeoutMs?: number,
+  context?: ActionExecutionContext,
 ): Promise<ActionResult> {
   try {
-    const pending = action.execute(input);
+    const pending = action.execute(input, context);
     if (timeoutMs === undefined) {
       return await pending;
     }
@@ -797,7 +812,9 @@ export async function executeWorkflowGraph(
       const terminalState: RuntimeCompensationState = {
         status: actionResult.ok ? "completed" : "failed",
         startedAt: node.compensation.startedAt,
-        completedAt: new Date(),
+        completedAt: node.compensation.startedAt
+          ? new Date(Math.max(new Date(node.compensation.startedAt).getTime(), Date.now()))
+          : new Date(),
         error: actionResult.ok ? null : actionResult.error,
       };
       compensationFailed ||= !actionResult.ok;
@@ -818,6 +835,27 @@ export async function executeWorkflowGraph(
     };
   };
 
+  function safeCompletedAt(startedAt: Date): Date {
+    return new Date(Math.max(startedAt.getTime(), Date.now()));
+  }
+
+  const persistForwardCheckpoint = async (nodeId: string): Promise<boolean> => {
+    if (!executionContext?.enableForwardCheckpoints || !onCheckpoint) {
+      return true;
+    }
+    try {
+      await onCheckpoint({
+        status: "running",
+        stage: "forward",
+        nodeId,
+        nodeResults: structuredClone(nodeResults),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   while (current) {
     if (visited.has(current.id)) {
       return fail({
@@ -835,6 +873,8 @@ export async function executeWorkflowGraph(
       });
     }
 
+    const nodeStartedAt = new Date();
+
     // Evaluate configured conditions and follow the matching branch.
     if (current.type === "condition") {
       const evaluation = evaluateCondition(current.data.config, input);
@@ -847,6 +887,8 @@ export async function executeWorkflowGraph(
             code: evaluation.code,
             message: evaluation.message,
           },
+          startedAt: nodeStartedAt,
+          completedAt: safeCompletedAt(nodeStartedAt),
         });
         return fail({ code: evaluation.code, message: evaluation.message });
       }
@@ -865,6 +907,8 @@ export async function executeWorkflowGraph(
             code: "INVALID_CONDITION_BRANCH",
             message: "The selected condition branch is invalid.",
           },
+          startedAt: nodeStartedAt,
+          completedAt: safeCompletedAt(nodeStartedAt),
         });
         return fail({
           code: "INVALID_CONDITION_BRANCH",
@@ -877,7 +921,17 @@ export async function executeWorkflowGraph(
         nodeId: current.id,
         status: "completed",
         output: { result: evaluation.value },
+        startedAt: nodeStartedAt,
+        completedAt: safeCompletedAt(nodeStartedAt),
       });
+
+      if (!(await persistForwardCheckpoint(current.id))) {
+        return fail({
+          code: "FORWARD_CHECKPOINT_FAILED",
+          message:
+            "Condition completed, but its forward checkpoint persistence failed.",
+        });
+      }
 
       const nextNode = nodeById.get(matchingEdges[0].target);
 
@@ -900,6 +954,8 @@ export async function executeWorkflowGraph(
           nodeId: current.id,
           status: "failed",
           error: parsedConfig.error,
+          startedAt: nodeStartedAt,
+          completedAt: safeCompletedAt(nodeStartedAt),
         });
         return fail(parsedConfig.error);
       }
@@ -914,7 +970,13 @@ export async function executeWorkflowGraph(
           code: "ACTION_NOT_REGISTERED",
           message: "The task action is not registered.",
         };
-        nodeResults.push({ nodeId: current.id, status: "failed", error });
+        nodeResults.push({
+          nodeId: current.id,
+          status: "failed",
+          error,
+          startedAt: nodeStartedAt,
+          completedAt: safeCompletedAt(nodeStartedAt),
+        });
         return fail(error);
       }
 
@@ -929,20 +991,39 @@ export async function executeWorkflowGraph(
           code: "COMPENSATION_ACTION_NOT_REGISTERED",
           message: "The task compensation action is not registered.",
         };
-        nodeResults.push({ nodeId: current.id, status: "failed", error });
+        nodeResults.push({
+          nodeId: current.id,
+          status: "failed",
+          error,
+          startedAt: nodeStartedAt,
+          completedAt: safeCompletedAt(nodeStartedAt),
+        });
         return fail(error);
       }
+
+      const actionContext: ActionExecutionContext | undefined = executionContext
+        ? {
+            executionId: executionContext.executionId,
+            workflowId: executionContext.workflowId,
+            nodeId: current.id,
+            tenantId: executionContext.tenantId,
+            idempotencyKey: `exec_${executionContext.executionId}_${current.id}`,
+          }
+        : undefined;
 
       const result = await invokeAction(
         handler,
         taskAction.input,
         taskAction.timeoutMs,
+        actionContext,
       );
       if (!result.ok) {
         nodeResults.push({
           nodeId: current.id,
           status: "failed",
           error: result.error,
+          startedAt: nodeStartedAt,
+          completedAt: safeCompletedAt(nodeStartedAt),
         });
         return fail(result.error);
       }
@@ -950,6 +1031,8 @@ export async function executeWorkflowGraph(
       const nodeResult: RuntimeNodeResult = {
         nodeId: current.id,
         status: "completed",
+        startedAt: nodeStartedAt,
+        completedAt: safeCompletedAt(nodeStartedAt),
       };
       nodeResults.push(nodeResult);
       if (
@@ -974,6 +1057,7 @@ export async function executeWorkflowGraph(
             message:
               "The action succeeded but returned output outside the JSON value contract.",
           };
+          nodeResult.completedAt = safeCompletedAt(nodeStartedAt);
           return fail(nodeResult.error);
         }
         nodeResult.output = output.value;
@@ -982,12 +1066,30 @@ export async function executeWorkflowGraph(
           compensation.taskOutput = output.value;
         }
       }
+
+      if (!(await persistForwardCheckpoint(current.id))) {
+        return fail({
+          code: "FORWARD_CHECKPOINT_FAILED",
+          message:
+            "The task action succeeded, but persisting its forward checkpoint failed.",
+        });
+      }
     } else {
       // Unconfigured tasks retain their existing traversal-only behavior.
       nodeResults.push({
         nodeId: current.id,
         status: "completed",
+        startedAt: nodeStartedAt,
+        completedAt: safeCompletedAt(nodeStartedAt),
       });
+
+      if (!(await persistForwardCheckpoint(current.id))) {
+        return fail({
+          code: "FORWARD_CHECKPOINT_FAILED",
+          message:
+            "The node completed, but persisting its forward checkpoint failed.",
+        });
+      }
     }
 
     const outgoingEdges = edges.filter((edge) => edge.source === current!.id);

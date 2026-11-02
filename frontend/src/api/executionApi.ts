@@ -104,6 +104,29 @@ export type ExecutionNodeResult = {
   output?: unknown;
   error?: ExecutionError | string;
   compensation?: ExecutionCompensation;
+  startedAt?: string | null;
+  completedAt?: string | null;
+};
+
+export type ExecutionGraphSnapshotNode = {
+  id: string;
+  type?: string;
+  data?: {
+    label?: string;
+    config?: unknown;
+  };
+};
+
+export type ExecutionGraphSnapshotEdge = {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+};
+
+export type ExecutionGraphSnapshot = {
+  nodes?: ExecutionGraphSnapshotNode[];
+  edges?: ExecutionGraphSnapshotEdge[];
 };
 
 export type WorkflowExecution = {
@@ -114,6 +137,7 @@ export type WorkflowExecution = {
   status: ExecutionStatus;
   currentNodeId?: string | null;
   nodeResults?: ExecutionNodeResult[];
+  graphSnapshot?: ExecutionGraphSnapshot;
   compensation?: ExecutionCompensation;
   error?: ExecutionError | string | null;
   startedAt?: string | null;

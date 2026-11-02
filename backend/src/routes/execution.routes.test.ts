@@ -10,6 +10,10 @@ import {
   createExecutionRouter,
 } from "./execution.routes";
 import { ExecutionServiceError } from "../services/execution.service";
+import {
+  createMemoryIdempotencyDependencies,
+  IdempotencyService,
+} from "../services/executionIdempotency";
 
 const tenantId = new Types.ObjectId();
 const otherTenantId = new Types.ObjectId();
@@ -227,9 +231,10 @@ const service = {
 
 before(async () => {
   const app = express();
+  const testIdempotencyService = new IdempotencyService(createMemoryIdempotencyDependencies());
   app.use(express.json());
-  app.use("/api/workflows", createExecutionRouter(resolver, service as any));
-  app.use("/api/executions", createExecutionRouter(resolver, service as any));
+  app.use("/api/workflows", createExecutionRouter(resolver, service as any, testIdempotencyService));
+  app.use("/api/executions", createExecutionRouter(resolver, service as any, testIdempotencyService));
   app.use(errorHandler);
 
   await new Promise<void>((resolve) => {
@@ -895,4 +900,189 @@ test("strictly scopes summary request to authenticated tenant", async () => {
 
   assert.equal(response.status, 200);
   assert.equal(receivedTenantId, String(otherTenantId));
+});
+
+test("idempotent execution: returns cached execution for repeated identical request with Idempotency-Key", async () => {
+  resetState();
+  const key = "test-idempotency-key-1";
+  const body = JSON.stringify({ input: { amount: 100 } });
+
+  // 1. First execution
+  const res1 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body,
+    },
+  );
+
+  assert.equal(res1.status, 200);
+  const data1 = await res1.json();
+  assert.equal(data1.execution.id, String(executionId));
+
+  // 2. Second execution with identical payload and key
+  resetState();
+  receivedWorkflowId = undefined;
+
+  const res2 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body,
+    },
+  );
+
+  assert.equal(res2.status, 200);
+  const data2 = await res2.json();
+  assert.equal(data2.execution.id, String(executionId));
+  assert.deepEqual(data1, data2);
+});
+
+test("idempotent execution: rejects repeated request with same key but different payload with 409", async () => {
+  resetState();
+  const key = "test-idempotency-key-2";
+
+  // 1. First execution with amount 100
+  const res1 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body: JSON.stringify({ input: { amount: 100 } }),
+    },
+  );
+
+  assert.equal(res1.status, 200);
+
+  // 2. Second execution with same key but amount 200
+  const res2 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body: JSON.stringify({ input: { amount: 200 } }),
+    },
+  );
+
+  assert.equal(res2.status, 409);
+  const errBody = await res2.json();
+  assert.equal(errBody.error.code, "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH");
+});
+
+test("idempotent execution: scopes Idempotency-Key strictly per tenant", async () => {
+  resetState();
+  const key = "test-shared-key";
+  const body = JSON.stringify({ input: { amount: 50 } });
+
+  // 1. Tenant 1 uses key
+  const res1 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Idempotency-Key": key },
+      body,
+    },
+  );
+  assert.equal(res1.status, 200);
+
+  // 2. Tenant 2 uses same key
+  const res2 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { "x-api-key": "other-test-key", "content-type": "application/json", "Idempotency-Key": key },
+      body,
+    },
+  );
+  assert.equal(res2.status, 200);
+  assert.equal(receivedTenantId, String(otherTenantId));
+});
+
+test("idempotent execution: blocks concurrent in-flight request with 409 IDEMPOTENCY_KEY_IN_FLIGHT", async () => {
+  resetState();
+  const key = "test-concurrent-race-key";
+  const body = JSON.stringify({ input: { orderId: 999 } });
+
+  // Simulate a slow execution using a deferred promise
+  let finishExecution: () => void = () => {};
+  const originalStart = service.startExecution;
+  service.startExecution = async (tenant, id, input) => {
+    receivedTenantId = String(tenant);
+    receivedWorkflowId = id;
+    receivedInput = input;
+    await new Promise<void>((resolve) => {
+      finishExecution = resolve;
+    });
+    return execution;
+  };
+
+  try {
+    // 1. First request starts and stays in-flight
+    const req1Promise = fetch(
+      `${baseUrl}/api/workflows/${workflowId}/executions`,
+      {
+        method: "POST",
+        headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+        body,
+      },
+    );
+
+    // Give req1 a moment to reserve the key
+    await new Promise((r) => setTimeout(r, 10));
+
+    // 2. Concurrent second request arrives while req1 is in flight
+    const res2 = await fetch(
+      `${baseUrl}/api/workflows/${workflowId}/executions`,
+      {
+        method: "POST",
+        headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+        body,
+      },
+    );
+
+    assert.equal(res2.status, 409);
+    const body2 = await res2.json();
+    assert.equal(body2.error.code, "IDEMPOTENCY_KEY_IN_FLIGHT");
+
+    // Complete first request
+    finishExecution();
+    const res1 = await req1Promise;
+    assert.equal(res1.status, 200);
+  } finally {
+    service.startExecution = originalStart;
+  }
+});
+
+test("idempotent execution: execution error releases reserved key allowing subsequent retry", async () => {
+  resetState();
+  const key = "test-fail-release-key";
+  const body = JSON.stringify({ input: { retriable: true } });
+
+  // 1. Trigger failure
+  mode = "execution-error";
+  const res1 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body,
+    },
+  );
+  assert.equal(res1.status, 500);
+
+  // 2. Subsequent retry succeeds because key reservation was cleanly released
+  mode = "normal";
+  const res2 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body,
+    },
+  );
+  assert.equal(res2.status, 200);
+  const data2 = await res2.json();
+  assert.equal(data2.execution.id, String(executionId));
 });

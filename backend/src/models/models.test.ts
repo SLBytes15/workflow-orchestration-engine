@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { Types } from "mongoose";
 import TenantModel from "./tenant.model";
 import WorkflowModel from "./workflow.model";
 import { validGraph } from "../validators/validGraph.fixture";
 import WorkflowExecutionModel from "./WorkflowExecution";
+import IdempotencyRecordModel from "./idempotencyRecord.model";
 
 describe("Tenant schema", () => {
   it("requires name and slug", async () => {
@@ -172,6 +174,24 @@ describe("WorkflowExecution schema", () => {
 
     await assert.doesNotReject(execution.validate());
     assert.equal(execution.nodeResults[0].compensation, undefined);
+  });
+
+  it("accepts node results with startedAt and completedAt timestamps", async () => {
+    const execution = new WorkflowExecutionModel({
+      ...validExecution(),
+      nodeResults: [
+        {
+          nodeId: "node-1",
+          status: "completed",
+          startedAt: new Date("2026-11-02T10:00:00.000Z"),
+          completedAt: new Date("2026-11-02T10:00:00.125Z"),
+        },
+      ],
+    });
+
+    await assert.doesNotReject(execution.validate());
+    assert.ok(execution.nodeResults[0].startedAt instanceof Date);
+    assert.ok(execution.nodeResults[0].completedAt instanceof Date);
   });
 
   it("accepts nested compensation metadata", async () => {
@@ -432,5 +452,76 @@ describe("WorkflowExecution schema", () => {
     assert.ok(
       indexes.some(([fields]) => fields.tenantId === 1 && fields._id === 1),
     );
+  });
+});
+
+describe("IdempotencyRecord schema", () => {
+  const tenantId = new Types.ObjectId();
+  const workflowId = new Types.ObjectId();
+
+  it("requires tenantId, workflowId, key, payloadHash, and expiresAt", async () => {
+    const record = new IdempotencyRecordModel({});
+    await assert.rejects(record.validate(), (error: unknown) => {
+      const validationError = error as { errors?: Record<string, unknown> };
+      return Boolean(
+        validationError.errors?.tenantId &&
+          validationError.errors?.workflowId &&
+          validationError.errors?.key &&
+          validationError.errors?.payloadHash &&
+          validationError.errors?.expiresAt,
+      );
+    });
+  });
+
+  it("defaults status to in_flight and accepts completed", async () => {
+    const record = new IdempotencyRecordModel({
+      tenantId,
+      workflowId,
+      key: "idemp-key-1",
+      payloadHash: "abc123hash",
+      expiresAt: new Date(Date.now() + 60000),
+    });
+    assert.equal(record.status, "in_flight");
+    await assert.doesNotReject(record.validate());
+
+    record.set("status", "completed");
+    await assert.doesNotReject(record.validate());
+
+    record.set("status", "invalid_status");
+    await assert.rejects(record.validate());
+  });
+
+  it("declares unique compound index on tenantId + workflowId + key", () => {
+    const indexes = IdempotencyRecordModel.schema.indexes();
+    const compound = indexes.find(
+      ([fields]) =>
+        fields.tenantId === 1 && fields.workflowId === 1 && fields.key === 1,
+    );
+    assert.ok(compound, "Expected compound index on tenantId + workflowId + key");
+    assert.equal(compound[1].unique, true);
+  });
+
+  it("declares TTL index on expiresAt with expireAfterSeconds: 0", () => {
+    const indexes = IdempotencyRecordModel.schema.indexes();
+    const ttl = indexes.find(([fields]) => fields.expiresAt === 1);
+    assert.ok(ttl, "Expected TTL index on expiresAt");
+    assert.equal(ttl[1].expireAfterSeconds, 0);
+  });
+
+  it("enables timestamps", () => {
+    assert.equal(IdempotencyRecordModel.schema.options.timestamps, true);
+  });
+
+  it("accepts reservationToken as an optional fencing token", async () => {
+    const record = new IdempotencyRecordModel({
+      tenantId,
+      workflowId,
+      key: "fenced-key",
+      payloadHash: "hash123",
+      reservationToken: "fence-token-12345",
+      expiresAt: new Date(Date.now() + 60000),
+    });
+    assert.equal(record.reservationToken, "fence-token-12345");
+    await assert.doesNotReject(record.validate());
   });
 });
