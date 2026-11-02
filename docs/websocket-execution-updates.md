@@ -599,3 +599,42 @@ test coverage. This report independently inspected source and test files but
 did not execute tests, builds, or live end-to-end checks. Member-reported
 results are explicitly identified; all manual E2E checklist items remain
 **NOT RUN**.
+
+## Latest backend verification update — 2026-11-02
+
+This update supersedes the earlier NOT VERIFIED findings about production
+Express registration and WebSocket server attachment.
+
+**VERIFIED — Express ticket route registration**
+- `backend/src/app.ts` imports `executionWsTicketRoutes`.
+- `app.use("/api/executions", executionWsTicketRoutes)` registers the router.
+- The router declares `POST /ws-ticket`, giving the complete endpoint
+  `POST /api/executions/ws-ticket`.
+- `backend/src/routes/executionWsTicket.routes.test.ts` exercises the router
+  through an HTTP server and verifies authentication and ticket responses.
+
+**VERIFIED — WebSocket HTTP server attachment**
+- `backend/src/index.ts` attaches `executionEventHub` to the existing HTTP
+  server through `executionEventHub.attach(server)`.
+- Attachment occurs after the HTTP server starts listening.
+- The WebSocket endpoint uses the same HTTP server; it does not create a
+  separate listener.
+- `backend/src/index.test.ts` verifies attachment to the same server.
+
+**VERIFIED — graceful shutdown**
+- `backend/src/index.ts` closes the WebSocket service before closing the
+  HTTP server.
+- `backend/src/index.test.ts` verifies this shutdown order.
+
+**Test evidence inspected**
+- `backend/src/routes/executionWsTicket.routes.test.ts`
+- `backend/src/services/executionWebSocket.test.ts`
+- `backend/src/services/executionRealtime.integration.test.ts`
+- `backend/src/index.test.ts`
+
+The route-level HTTP test and in-process WebSocket tests do not establish
+that a deployed production environment has been tested.
+
+**NOT RUN — live deployed end-to-end test**
+- No live deployed end-to-end test was performed in this verification.
+- No experimental writes against shared MongoDB Atlas M0 were performed.
