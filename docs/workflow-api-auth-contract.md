@@ -2,15 +2,21 @@
 
 ## Status
 
-**Proposed — pending team agreement.**
+**Contract decisions pending; current REST authentication baseline implemented.**
 
-Production API-key authentication and MongoDB-backed workflow operations are blocked until the API-key contract is finalized.
+The current branch has database-backed API-key authentication and tenant-scoped
+workflow/execution routes. This does not establish that all production
+authentication policy, operational controls, or live-database integration
+requirements are complete.
 
 ## Existing implementation
 
-- `backend/src/services/apiKeyResolver.ts` contains a development-only in-memory API-key resolver.
-- `backend/src/middleware/tenant.middleware.ts` uses that resolver and attaches a development tenant context.
+- `backend/src/services/tenantResolver.ts` hashes the presented API key with SHA-256 for lookup, rejects non-active, revoked, or expired keys and inactive/missing tenants, and returns the persisted tenant ID.
+- `backend/src/middleware/tenantAuth.middleware.ts` reads `x-api-key` and attaches only the resolved tenant ID to server-side request context.
 - `backend/src/middleware/tenantContext.middleware.ts` validates the format of a client-supplied `x-tenant-id`; this does not establish authorization.
+- The legacy `/api/test-tenant` endpoint uses the development-only in-memory `tenantMiddleware`/`apiKeyResolver`; workflow and execution REST routes use `tenantAuthMiddleware` and the database-backed resolver instead.
+- `/api/health` does not require authentication; it remains subject to the `/api` rate limiter.
+- This is REST authentication only; no WebSocket ticket-authentication endpoint or handshake is implemented.
 - `backend/src/models/tenant.model.ts` is the canonical Mongoose Tenant model.
 - `backend/src/models/workflow.model.ts` is the canonical Mongoose Workflow model.
 - `backend/src/models/index.ts` exports TypeScript types, not the Mongoose models.
@@ -20,14 +26,14 @@ Do not duplicate or replace the existing models or connection module.
 
 ## Required trusted request context
 
-After the authentication contract is approved, middleware must resolve the API key to an authorized, persisted Tenant document and attach its verified MongoDB ObjectId to trusted server-side request context.
+The current REST middleware resolves the API key to a persisted active Tenant and attaches its MongoDB ObjectId to trusted server-side request context. The following remain requirements for policy review and production readiness:
 
-Requirements:
+Policy and coverage requirements:
 
 - The identity must originate from successful authentication and tenant mapping.
 - A client-supplied `tenantId` or `x-tenant-id` must not establish authorization.
 - The ObjectId must identify the persisted Tenant document.
-- Inactive-tenant handling must follow an agreed policy.
+- The current resolver rejects inactive tenants; any policy change must be explicit.
 - Authentication failures must fail closed.
 
 ## Required service interfaces

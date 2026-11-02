@@ -23,6 +23,8 @@ let receivedWorkflowId: string | undefined;
 let receivedExecutionId: string | undefined;
 let receivedLimit: unknown;
 let receivedCursor: unknown;
+let receivedSummaryOptions: any;
+let summaryResult: any;
 
 let mode: "normal" | "execution-error" | "not-found" = "normal";
 let historyRecords: Record<string, any>[] = [];
@@ -148,6 +150,79 @@ const service = {
       },
     };
   },
+
+  async getExecutionSummary(tenant: Types.ObjectId, options?: Record<string, unknown>) {
+    receivedTenantId = String(tenant);
+    receivedSummaryOptions = options;
+
+    if (options?.workflowId !== undefined) {
+      if (typeof options.workflowId !== "string" || !/^[a-f\d]{24}$/i.test(options.workflowId)) {
+        throw new ExecutionServiceError(
+          400,
+          "VALIDATION_ERROR",
+          "Invalid workflow ID",
+        );
+      }
+    }
+
+    if (options?.from !== undefined) {
+      if (typeof options.from !== "string" || Number.isNaN(Date.parse(options.from))) {
+        throw new ExecutionServiceError(
+          400,
+          "VALIDATION_ERROR",
+          "Invalid 'from' date string",
+        );
+      }
+    }
+
+    if (options?.to !== undefined) {
+      if (typeof options.to !== "string" || Number.isNaN(Date.parse(options.to))) {
+        throw new ExecutionServiceError(
+          400,
+          "VALIDATION_ERROR",
+          "Invalid 'to' date string",
+        );
+      }
+    }
+
+    if (options?.from && options?.to) {
+      if (new Date(options.from as string) > new Date(options.to as string)) {
+        throw new ExecutionServiceError(
+          400,
+          "VALIDATION_ERROR",
+          "'from' date cannot be after 'to' date",
+        );
+      }
+    }
+
+    if (mode === "execution-error") {
+      throw new Error("database failure");
+    }
+
+    return (
+      summaryResult ?? {
+        summary: {
+          total: 10,
+          completed: 8,
+          failed: 1,
+          running: 1,
+          queued: 0,
+          compensating: 0,
+          compensated: 0,
+          compensationFailed: 0,
+          unsuccessful: 1,
+          successRate: 0.8889,
+          failureRate: 0.1111,
+          avgDurationMs: 1500,
+        },
+        filter: {
+          workflowId: options?.workflowId ?? null,
+          from: options?.from ?? null,
+          to: options?.to ?? null,
+        },
+      }
+    );
+  },
 };
 
 before(async () => {
@@ -188,6 +263,8 @@ function resetState() {
   receivedLimit = undefined;
   receivedCursor = undefined;
   receivedInput = undefined;
+  receivedSummaryOptions = undefined;
+  summaryResult = undefined;
   historyRecords = [];
   execution.status = "completed";
   execution.error = null;
@@ -667,4 +744,155 @@ test("does not return another tenant's execution history or compensation metadat
     hasMore: false,
     nextCursor: null,
   });
+});
+
+test("rejects GET /api/executions/summary without an API key", async () => {
+  resetState();
+  const response = await fetch(`${baseUrl}/api/executions/summary`);
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "UNAUTHORIZED",
+      message: "A valid API key is required",
+    },
+  });
+});
+
+test("returns execution summary with default filters for authenticated tenant", async () => {
+  resetState();
+  const response = await fetch(`${baseUrl}/api/executions/summary`, {
+    headers: authHeaders(),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedTenantId, String(tenantId));
+  assert.deepEqual(receivedSummaryOptions, {
+    workflowId: undefined,
+    from: undefined,
+    to: undefined,
+  });
+
+  const body = await response.json();
+  assert.equal(body.summary.total, 10);
+  assert.equal(body.summary.completed, 8);
+  assert.equal(body.summary.unsuccessful, 1);
+  assert.equal(body.filter.workflowId, null);
+  assert.equal(body.filter.from, null);
+  assert.equal(body.filter.to, null);
+});
+
+test("passes workflowId, from, and to query parameters to service", async () => {
+  resetState();
+  const validWorkflowId = new Types.ObjectId().toString();
+  const from = "2026-10-01T00:00:00.000Z";
+  const to = "2026-10-15T23:59:59.999Z";
+
+  const response = await fetch(
+    `${baseUrl}/api/executions/summary?workflowId=${validWorkflowId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedTenantId, String(tenantId));
+  assert.deepEqual(receivedSummaryOptions, {
+    workflowId: validWorkflowId,
+    from,
+    to,
+  });
+
+  const body = await response.json();
+  assert.equal(body.filter.workflowId, validWorkflowId);
+  assert.equal(body.filter.from, from);
+  assert.equal(body.filter.to, to);
+});
+
+test("returns 400 when workflowId query parameter is invalid", async () => {
+  resetState();
+  const response = await fetch(
+    `${baseUrl}/api/executions/summary?workflowId=invalid-id`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "VALIDATION_ERROR");
+  assert.equal(body.error.message, "Invalid workflow ID");
+});
+
+test("returns 400 when from date string is invalid", async () => {
+  resetState();
+  const response = await fetch(
+    `${baseUrl}/api/executions/summary?from=not-a-date`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "VALIDATION_ERROR");
+  assert.equal(body.error.message, "Invalid 'from' date string");
+});
+
+test("returns 400 when to date string is invalid", async () => {
+  resetState();
+  const response = await fetch(
+    `${baseUrl}/api/executions/summary?to=not-a-date`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "VALIDATION_ERROR");
+  assert.equal(body.error.message, "Invalid 'to' date string");
+});
+
+test("returns 400 when from date is after to date", async () => {
+  resetState();
+  const from = "2026-10-20T00:00:00.000Z";
+  const to = "2026-10-10T00:00:00.000Z";
+
+  const response = await fetch(
+    `${baseUrl}/api/executions/summary?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "VALIDATION_ERROR");
+  assert.equal(body.error.message, "'from' date cannot be after 'to' date");
+});
+
+test("does not collide with /api/executions/:executionId route", async () => {
+  resetState();
+  // Call /api/executions/summary
+  const summaryRes = await fetch(`${baseUrl}/api/executions/summary`, {
+    headers: authHeaders(),
+  });
+  assert.equal(summaryRes.status, 200);
+  assert.equal(receivedExecutionId, undefined);
+
+  // Call /api/executions/:executionId
+  resetState();
+  const detailRes = await fetch(`${baseUrl}/api/executions/${executionId}`, {
+    headers: authHeaders(),
+  });
+  assert.equal(detailRes.status, 200);
+  assert.equal(receivedExecutionId, String(executionId));
+});
+
+test("returns 404 when GET /api/workflows/summary is attempted", async () => {
+  resetState();
+  const response = await fetch(`${baseUrl}/api/workflows/summary`, {
+    headers: authHeaders(),
+  });
+  assert.equal(response.status, 404);
+});
+
+test("strictly scopes summary request to authenticated tenant", async () => {
+  resetState();
+  const response = await fetch(`${baseUrl}/api/executions/summary`, {
+    headers: { "x-api-key": "other-test-key" },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedTenantId, String(otherTenantId));
 });

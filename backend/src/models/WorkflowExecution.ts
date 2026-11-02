@@ -241,6 +241,11 @@ workflowExecutionSchema.index({
 
 workflowExecutionSchema.index({
   tenantId: 1,
+  createdAt: -1,
+});
+
+workflowExecutionSchema.index({
+  tenantId: 1,
   _id: 1,
 });
 

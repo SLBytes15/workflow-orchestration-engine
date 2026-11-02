@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import { tenantAuthMiddleware } from "../middleware/tenantAuth.middleware";
 import { createTenantResolver, type TenantResolver } from "../services/tenantResolver";
 import {
@@ -68,6 +68,35 @@ const execution = await service.startExecution(
     }
   });
 
+  router.get("/", requireTenantAuth, async (req, res, next) => {
+    try {
+      if (req.baseUrl.endsWith("/workflows")) {
+        next();
+        return;
+      }
+
+      const tenant = req.tenantContext;
+      if (!tenant) {
+        res.status(401).json({ error: { code: "UNAUTHORIZED", message: "A valid API key is required" } });
+        return;
+      }
+
+      const result = await service.listGlobalExecutions(tenant.tenantId, {
+        workflowId: req.query.workflowId,
+        status: req.query.status,
+        from: req.query.from,
+        to: req.query.to,
+        executionId: req.query.executionId,
+        limit: req.query.limit,
+        cursor: req.query.cursor,
+      });
+
+      res.status(200).json({ message: "Execution history retrieved successfully", ...result });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/:workflowId/executions", requireTenantAuth, async (req, res, next) => {
     try {
       const tenant = req.tenantContext;
@@ -88,8 +117,38 @@ const execution = await service.startExecution(
     }
   });
 
+  router.get("/summary", requireTenantAuth, async (req, res, next) => {
+    try {
+      if (req.baseUrl.endsWith("/workflows")) {
+        next();
+        return;
+      }
+
+      const tenant = req.tenantContext;
+      if (!tenant) {
+        res.status(401).json({ error: { code: "UNAUTHORIZED", message: "A valid API key is required" } });
+        return;
+      }
+
+      const result = await service.getExecutionSummary(tenant.tenantId, {
+        workflowId: req.query.workflowId,
+        from: req.query.from,
+        to: req.query.to,
+      });
+
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/:executionId", requireTenantAuth, async (req, res, next) => {
     try {
+      if (req.baseUrl.endsWith("/workflows")) {
+        next();
+        return;
+      }
+
       const tenant = req.tenantContext;
       if (!tenant) {
         res.status(401).json({ error: { code: "UNAUTHORIZED", message: "A valid API key is required" } });

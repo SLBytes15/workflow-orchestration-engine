@@ -424,6 +424,12 @@ describe("WorkflowExecution schema", () => {
     );
 
     assert.ok(
+      indexes.some(
+        ([fields]) => fields.tenantId === 1 && fields.createdAt === -1,
+      ),
+    );
+
+    assert.ok(
       indexes.some(([fields]) => fields.tenantId === 1 && fields._id === 1),
     );
   });

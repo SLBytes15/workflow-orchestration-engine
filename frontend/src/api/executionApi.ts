@@ -80,9 +80,11 @@ export type ExecutionStatus =
 
 export type CompensationStatus =
   | "pending"
+  | "not_started"
   | "running"
   | "completed"
-  | "failed";
+  | "failed"
+  | "skipped";
 
 export type ExecutionError = {
   code?: string;
@@ -93,7 +95,7 @@ export type ExecutionCompensation = {
   status: CompensationStatus;
   startedAt?: string | null;
   completedAt?: string | null;
-  error?: ExecutionError | null;
+  error?: ExecutionError | unknown | null;
 };
 
 export type ExecutionNodeResult = {
@@ -112,6 +114,7 @@ export type WorkflowExecution = {
   status: ExecutionStatus;
   currentNodeId?: string | null;
   nodeResults?: ExecutionNodeResult[];
+  compensation?: ExecutionCompensation;
   error?: ExecutionError | string | null;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -280,6 +283,173 @@ export async function getWorkflowExecutions(
   if (!payload || !Array.isArray(payload.executions) || !payload.pagination) {
     throw new Error(
       "The API response did not contain valid execution history.",
+    );
+  }
+
+  return payload;
+}
+export type GlobalExecutionFilters = {
+  workflowId?: string;
+  status?: ExecutionStatus | string;
+  from?: string;
+  to?: string;
+  executionId?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export async function getGlobalExecutions(
+  apiKey: string,
+  options: GlobalExecutionFilters = {},
+): Promise<WorkflowExecutionHistory> {
+  if (!apiKey.trim()) {
+    throw new Error("API authentication is not configured.");
+  }
+
+  const params = new URLSearchParams();
+
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  if (options.cursor) {
+    params.set("cursor", options.cursor);
+  }
+  if (options.workflowId) {
+    params.set("workflowId", options.workflowId);
+  }
+  if (options.status) {
+    params.set("status", options.status);
+  }
+  if (options.from) {
+    params.set("from", options.from);
+  }
+  if (options.to) {
+    params.set("to", options.to);
+  }
+  if (options.executionId) {
+    params.set("executionId", options.executionId);
+  }
+
+  const query = params.toString();
+  const url = `${API_BASE_URL}/api/executions` + (query ? `?${query}` : "");
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      "X-API-Key": apiKey,
+    },
+  });
+
+  const body: unknown = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const payload = body as {
+      error?: { message?: string };
+    } | null;
+
+    throw new Error(
+      payload?.error?.message ||
+        `Global execution history request failed (HTTP ${response.status}).`,
+    );
+  }
+
+  const payload = body as WorkflowExecutionHistory;
+
+  if (!payload || !Array.isArray(payload.executions) || !payload.pagination) {
+    throw new Error(
+      "The API response did not contain valid execution history.",
+    );
+  }
+
+  return payload;
+}
+export type ExecutionSummary = {
+  total: number;
+  queued: number;
+  running: number;
+  completed: number;
+  failed: number;
+  compensating: number;
+  compensated: number;
+  compensationFailed: number;
+  unsuccessful: number;
+  successRate: number;
+  failureRate: number;
+  avgDurationMs: number | null;
+};
+
+export type ExecutionSummaryFilter = {
+  workflowId: string | null;
+  from: string | null;
+  to: string | null;
+};
+
+export type ExecutionSummaryResult = {
+  summary: ExecutionSummary;
+  filter: ExecutionSummaryFilter;
+};
+
+export type ExecutionSummaryOptions = {
+  workflowId?: string;
+  from?: string;
+  to?: string;
+};
+
+export async function getExecutionSummary(
+  apiKey: string,
+  options: ExecutionSummaryOptions = {},
+): Promise<ExecutionSummaryResult> {
+  if (!apiKey.trim()) {
+    throw new Error("API authentication is not configured.");
+  }
+
+  const params = new URLSearchParams();
+
+  if (options.workflowId) {
+    params.set("workflowId", options.workflowId);
+  }
+  if (options.from) {
+    params.set("from", options.from);
+  }
+  if (options.to) {
+    params.set("to", options.to);
+  }
+
+  const query = params.toString();
+  const url =
+    `${API_BASE_URL}/api/executions/summary` + (query ? `?${query}` : "");
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      "X-API-Key": apiKey,
+    },
+  });
+
+  const body: unknown = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const payload = body as {
+      error?: { message?: string };
+    } | null;
+
+    throw new Error(
+      payload?.error?.message ||
+        `Execution summary request failed (HTTP ${response.status}).`,
+    );
+  }
+
+  const payload = body as ExecutionSummaryResult;
+
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !payload.summary ||
+    typeof payload.summary !== "object" ||
+    typeof payload.summary.total !== "number"
+  ) {
+    throw new Error(
+      "The API response did not contain valid execution summary data.",
     );
   }
 
