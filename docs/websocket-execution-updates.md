@@ -2,15 +2,12 @@
 
 ## Status and evidence labels
 
-This document separates the team's **APPROVED DESIGN** from implementation
-evidence. The initial 1 November inspection used the checked-out
-`member/mahak` HEAD `bd2775c33179b9363f99e7052b8193d3a5b0d8d7` and stale
-remote-tracking refs. The branch was later fast-forwarded to
-`b15d510be7c6dae8e263193ff30acbbe620562f4`; the documentation change was
-restored from `stash@{0}`. Current status statements below refer to that
-fast-forwarded branch and the explicitly identified frontend reference. The
-pre-fetch section is retained as historical context only and is superseded
-where it conflicts with the later evidence.
+This document separates the team's **APPROVED DESIGN** from what is visible
+in this repository.
+
+This document preserves the original approved design and QA scenarios from
+the `member/mahak` branch snapshot. The current implementation verification
+section below records the findings from `member/swathi` as of 2026-11-01.
 
 - **APPROVED DESIGN** — agreed MVP behavior, not proof of implementation.
 - **IMPLEMENTED** — present in the inspected source.
@@ -21,14 +18,148 @@ where it conflicts with the later evidence.
   independently verified in this documentation task.
 - **SUPERSEDED** — historical finding that must not be read as current status.
 
-## Follow-up verification after fetch — 1 November 2026
+## Current implementation verification — 2026-11-01
+
+This section records the implementation contract verified during the
+frontend/backend inspection on `member/swathi`. It is the current verification
+record and supersedes conflicting implementation-status statements in the
+original `member/mahak` branch snapshot below. Approved design and QA scenarios
+remain useful as design and test references; they are not automatically proof
+of production deployment or end-to-end testing.
+
+### Verified ticket API and lifecycle
+
+- The frontend requests a connection ticket using
+  `POST /api/executions/ws-ticket`.
+- The request sends the existing API key in the `X-API-Key` header.
+- The backend ticket router declares `POST /ws-ticket`; its route test mounts
+  that router under `/api/executions`.
+- The route uses tenant authentication and derives the tenant ID from
+  server-side request context. A client-supplied tenant ID is not used to
+  establish ticket ownership.
+- A successful response contains `ticket` and `expiresAt`.
+- Tickets have a 60-second lifetime. The backend generates a 32-byte
+  cryptographically random token encoded as base64url.
+- Ticket records contain the tenant ID and expiry time in an in-memory store.
+- A ticket is consumed once. Consumption removes the record, and expired,
+  missing, invalid, or previously consumed tickets are rejected.
+- The frontend validates that the returned ticket is a non-empty string and
+  that `expiresAt` is a valid future date.
+
+### WebSocket connection contract
+
+The WebSocket endpoint path is `/ws/executions`.
+
+The frontend builds the connection URL using the API base URL's protocol:
+`wss` for HTTPS and `ws` otherwise. It sends the ticket as the `ticket`
+query parameter:
+
+`/ws/executions?ticket=<single-use-ticket>`
+
+The API key is not placed in the WebSocket URL. The backend consumes the
+ticket when handling the WebSocket connection. Invalid tickets cause the
+socket to close with code `4401` and reason `Unauthorized`.
+
+### Tenant binding and delivery
+
+The ticket binds the connection to the tenant resolved by REST API-key
+authentication. The WebSocket service maintains sockets grouped by tenant ID
+and publishes an execution event only to that tenant's connected sockets.
+Client messages are ignored.
+
+### Event names and payload
+
+The verified event names are:
+
+| Event | Backend status mapping |
+|---|---|
+| `execution.updated` | `queued`, `running`, `compensating` |
+| `execution.completed` | `completed` |
+| `execution.failed` | `failed` |
+
+Each event uses this envelope and data structure:
+
+```json
+{
+  "type": "execution.updated",
+  "data": {
+    "executionId": "<execution id>",
+    "workflowId": "<workflow id>",
+    "status": "<persisted execution status>",
+    "updatedAt": "<ISO-8601 timestamp>"
+  }
+}
+```
+The `type` value changes according to the event mapping above. The four data fields remain the same. The status represents the persisted execution status.
+
+The persisted statuses also include `compensated` and `compensation_failed`. The current backend deliberately does not map these two statuses to `execution.completed` or `execution.failed`; no additional compensation event mapping is established by this contract.
+
+### Publish-after-persistence behavior
+
+The execution service awaits the relevant execution update before notifying the WebSocket publisher. This applies to the running transition, persisted checkpoints, and final execution update.
+
+Notification is best-effort: publisher/send failures are caught and do not change the persisted execution outcome or interrupt workflow execution. WebSocket notification is therefore not a substitute for successful persistence.
+
+### Frontend reconnect and REST fallback
+
+- The executions page continues to load execution history through REST.
+- The frontend obtains a fresh single-use ticket for each connection attempt.
+- The realtime client validates incoming event names and payload fields.
+- Reconnection uses bounded exponential backoff, up to 30 seconds.
+- After a successful reconnection, the frontend reloads execution history through REST to recover updates that may have been missed.
+- Manual refresh and REST history controls remain available while the socket is disconnected.
+- Cleanup stops reconnect attempts and closes the active socket.
+
+REST remains the source of truth for execution history and current persisted state. WebSocket notifications are an additional best-effort update channel.
+
+### Verification checklist
+
+**VERIFIED by source inspection**
+
+- [x] Ticket request method, path, API-key header, and response fields.
+- [x] 60-second ticket lifetime and frontend expiry validation.
+- [x] Cryptographically random ticket generation and single-use consumption.
+- [x] Server-derived tenant binding.
+- [x] WebSocket path and `ticket` query parameter.
+- [x] Event names, status mapping, and payload fields.
+- [x] Tenant-scoped socket delivery.
+- [x] Frontend validation, reconnect behavior, and REST history fallback.
+- [x] Execution persistence awaited before event notification.
+- [x] Notification failures isolated from workflow execution.
+
+**NOT VERIFIED in this inspection**
+
+- [ ] Production application registration/mounting of the ticket router.
+- [ ] Production attachment of the WebSocket server to the running HTTP server.
+- [ ] A complete production end-to-end connection and event-delivery flow.
+
+The ticket route's mount is visible in its route test, and WebSocket attachment is visible in test setup. These test references do not establish production bootstrap registration or attachment. Do not interpret these two items as verified merely because the individual components exist.
+
+### Known MVP limitations
+
+- Ticket storage is in memory and is not shared between backend instances.
+- WebSocket connection tracking is in memory and single-process.
+- Tickets and connection state are not persisted across backend restarts.
+- Event delivery is best-effort; there is no durable queue or replay.
+- Exactly-once delivery is not guaranteed.
+- There is no multi-instance pub/sub or horizontal connection distribution.
+- Clients must use REST history refresh to recover missed updates.
+- `compensated` and `compensation_failed` have no approved WebSocket event mapping in the current implementation.
+
+## A. Overview and scope
+
+**APPROVED DESIGN:** Add live notifications for workflow execution lifecycle
+updates. REST remains the source of truth for execution history, details, and
+the latest persisted state. WebSocket is an additional best-effort channel;
+clients recover current state through REST.
 
 ### Git references and reported commits
 
-`git fetch --all` succeeded. The local branch was subsequently fast-forwarded
-to `b15d510be7c6dae8e263193ff30acbbe620562f4` and matches
-`origin/member/mahak`. Updated remote heads recorded during the investigation
-include:
+**IMPLEMENTED:** The original member/mahak branch snapshot recorded REST-only
+execution updates. See the current implementation verification above for the
+member/swathi findings.
+
+## B. Architecture
 
 | Remote ref | Fetched HEAD |
 |---|---|
