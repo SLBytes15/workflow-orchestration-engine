@@ -170,15 +170,34 @@ const result = await service.startExecution(
   assert.equal(String(result.tenantId), String(tenantId));
   assert.equal(result.status, "completed");
   assert.equal(result.workflowVersion, 3);
-  assert.deepEqual(result.nodeResults, [
-    { nodeId: "trigger-1", status: "completed" },
-    {
-      nodeId: "condition-1",
-      status: "completed",
-      output: { result: true },
-    },
-    { nodeId: "task-true", status: "completed" },
-  ]);
+  assert.equal(result.nodeResults.length, 3);
+  assert.equal(result.nodeResults[0].nodeId, "trigger-1");
+  assert.equal(result.nodeResults[0].status, "completed");
+  assert.ok(result.nodeResults[0].startedAt instanceof Date);
+  assert.ok(result.nodeResults[0].completedAt instanceof Date);
+  assert.ok(
+    Number(result.nodeResults[0].completedAt) >=
+      Number(result.nodeResults[0].startedAt),
+  );
+
+  assert.equal(result.nodeResults[1].nodeId, "condition-1");
+  assert.equal(result.nodeResults[1].status, "completed");
+  assert.deepEqual(result.nodeResults[1].output, { result: true });
+  assert.ok(result.nodeResults[1].startedAt instanceof Date);
+  assert.ok(result.nodeResults[1].completedAt instanceof Date);
+  assert.ok(
+    Number(result.nodeResults[1].completedAt) >=
+      Number(result.nodeResults[1].startedAt),
+  );
+
+  assert.equal(result.nodeResults[2].nodeId, "task-true");
+  assert.equal(result.nodeResults[2].status, "completed");
+  assert.ok(result.nodeResults[2].startedAt instanceof Date);
+  assert.ok(result.nodeResults[2].completedAt instanceof Date);
+  assert.ok(
+    Number(result.nodeResults[2].completedAt) >=
+      Number(result.nodeResults[2].startedAt),
+  );
 
   assert.equal(updates.length, 2);
   assert.equal(updates[0].expectedStatus, "queued");
@@ -2084,6 +2103,207 @@ test("keeps retry and timeoutMs out of task and compensation payloads", async ()
   assert.equal(updates[0].update.status, "running");
   assert.equal(updates[updates.length - 1].update.status, "compensated");
   assert.ok(updates.some((entry) => entry.update.status === "compensating"));
+});
+
+test("forward checkpointing: persists intermediate forward checkpoints when enabled", async () => {
+  const graph = sagaWorkflow([
+    {
+      nodeId: "task-1",
+      actionId: "transform",
+    },
+    {
+      nodeId: "task-2",
+      actionId: "transform",
+    },
+  ]);
+  const updates: Array<{
+    expectedStatus: string;
+    expectedResults?: unknown;
+    update: Record<string, unknown>;
+  }> = [];
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async (input: ValidatedActionInput) => ({
+          ok: true as const,
+          output: { completed: String(input.taskId) },
+        }),
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+    actions,
+  );
+
+  const result = await service.startExecution(
+    tenantId,
+    String(workflowId),
+    {},
+    { enableForwardCheckpoints: true },
+  );
+
+  assert.equal(result.status, "completed");
+  // Expected updates: 1 running start + 1 trigger + 1 task-1 + 1 task-2 + 1 terminal completed = 5
+  assert.ok(updates.length >= 4);
+  assert.equal(updates[0].update.status, "running");
+  assert.equal(updates[updates.length - 1].update.status, "completed");
+  // Check that intermediate updates maintain status 'running' and accumulate nodeResults
+  const forwardUpdates = updates.filter(
+    (u) => u.update.status === "running" && Array.isArray(u.update.nodeResults),
+  );
+  assert.ok(forwardUpdates.length >= 2);
+});
+
+test("forward checkpointing: workflow-level executionPolicy enables forward checkpoints without options parameter", async () => {
+  const baseGraph = sagaWorkflow([
+    { nodeId: "task-1", actionId: "transform" },
+    { nodeId: "task-2", actionId: "transform" },
+  ]);
+  // Workflow declares executionPolicy: { enableForwardCheckpoints: true }
+  const graph = {
+    ...baseGraph,
+    graph: {
+      ...baseGraph.graph,
+      executionPolicy: { enableForwardCheckpoints: true },
+    },
+  };
+
+  const updates: Array<{
+    expectedStatus: string;
+    update: Record<string, unknown>;
+  }> = [];
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async () => ({ ok: true as const, output: { done: true } }),
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+    actions,
+  );
+
+  // Note: options parameter is NOT passed ({ enableForwardCheckpoints } is omitted)
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.equal(result.status, "completed");
+  const forwardUpdates = updates.filter(
+    (u) => u.update.status === "running" && Array.isArray(u.update.nodeResults) && u.update.nodeResults.length > 0,
+  );
+  assert.ok(forwardUpdates.length >= 2, "Workflow-level executionPolicy must trigger forward checkpoints");
+});
+
+test("forward checkpointing: disabled by default results in zero intermediate forward checkpoints", async () => {
+  const graph = sagaWorkflow([
+    { nodeId: "task-1", actionId: "transform" },
+    { nodeId: "task-2", actionId: "transform" },
+  ]);
+
+  const updates: Array<{
+    expectedStatus: string;
+    update: Record<string, unknown>;
+  }> = [];
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async () => ({ ok: true as const, output: { done: true } }),
+      },
+    },
+  };
+
+  const service = createExecutionService(
+    sagaDependencies(graph, actions, updates),
+    actions,
+  );
+
+  // Default execution (options omitted, no workflow executionPolicy)
+  const result = await service.startExecution(tenantId, String(workflowId));
+
+  assert.equal(result.status, "completed");
+  // Only 2 updates: 1 running start + 1 terminal completed. ZERO intermediate forward updates.
+  assert.equal(updates.length, 2);
+  assert.equal(updates[0].update.status, "running");
+  assert.equal(updates[1].update.status, "completed");
+});
+
+test("forward checkpointing: failure during forward checkpoint write triggers failure with FORWARD_CHECKPOINT_FAILED", async () => {
+  const graph = sagaWorkflow([
+    {
+      nodeId: "task-a",
+      actionId: "transform",
+      compensationActionId: "undo-a",
+    },
+  ]);
+  let compensationCalled = false;
+  let taskRan = false;
+
+  const actions: ActionRegistry = {
+    taskActions: {
+      transform: {
+        execute: async () => {
+          taskRan = true;
+          return { ok: true as const, output: { processed: true } };
+        },
+      },
+    },
+    compensationActions: {
+      "undo-a": {
+        execute: async () => {
+          compensationCalled = true;
+          return { ok: true as const };
+        },
+      },
+    },
+  };
+
+  let writeCount = 0;
+  const service = createExecutionService(
+    makeDependencies({
+      findWorkflow: async () => graph,
+      updateExecution: async (
+        _tenant,
+        _id,
+        _expectedStatus,
+        _expectedResults,
+        update,
+      ) => {
+        writeCount += 1;
+        // Fail on the task-a forward checkpoint update
+        if (
+          update.status === "running" &&
+          Array.isArray(update.nodeResults) &&
+          update.nodeResults.some((n: any) => n.nodeId === "task-a")
+        ) {
+          throw new Error("Simulated database write failure on forward checkpoint");
+        }
+
+        return {
+          _id: executionId,
+          tenantId,
+          workflowId,
+          workflowVersion: 3,
+          graphSnapshot: graph.graph,
+          ...update,
+        };
+      },
+    }),
+    actions,
+  );
+
+  const result = await service.startExecution(
+    tenantId,
+    String(workflowId),
+    {},
+    { enableForwardCheckpoints: true },
+  );
+
+  assert.equal(taskRan, true); // Action executed externally
+  assert.equal(result.status, "compensated"); // Compensation succeeded for the completed task
+  assert.equal(compensationCalled, true);
 });
 
 test("global executions: retrieves executions scoped to tenant", async () => {

@@ -963,3 +963,300 @@
     flex-direction: column;
   }
 }
+
+/* Timeline & Duration Insights */
+.executions-page__timeline-section {
+  margin: 20px 0;
+  padding: 18px;
+  border-radius: 10px;
+  background: var(--surface-secondary, var(--code-bg));
+  border: 1px solid var(--border);
+}
+
+.executions-page__timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.executions-page__timeline-header h3 {
+  margin: 0 !important;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.executions-page__timeline-step-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-p);
+  background: var(--surface, var(--bg));
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.executions-page__timeline-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.executions-page__timeline-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--border);
+}
+
+.executions-page__timeline-metric--slowest {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.executions-page__timeline-metric-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-p);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.executions-page__timeline-metric-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executions-page__timeline-failure-box {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: var(--text-h);
+}
+
+.executions-page__timeline-failure-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #ef4444;
+}
+
+:root[data-theme="dark"] .executions-page__timeline-failure-title {
+  color: #f87171;
+}
+
+.executions-page__timeline-failure-title code {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.executions-page__timeline-failure-message {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-h);
+  overflow-wrap: anywhere;
+}
+
+.executions-page__timeline-list {
+  position: relative;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.executions-page__timeline-step {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  padding-bottom: 18px;
+}
+
+.executions-page__timeline-step:last-child {
+  padding-bottom: 0;
+}
+
+/* Connecting line */
+.executions-page__timeline-step::before {
+  content: '';
+  position: absolute;
+  top: 18px;
+  left: 7px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+
+.executions-page__timeline-step:last-child::before {
+  display: none;
+}
+
+.executions-page__timeline-node-marker {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.executions-page__timeline-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--surface, var(--bg));
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.executions-page__timeline-dot--start {
+  background: var(--accent);
+}
+
+.executions-page__timeline-dot--completed,
+.executions-page__timeline-dot--compensated {
+  background: #10b981;
+}
+
+.executions-page__timeline-dot--failed,
+.executions-page__timeline-dot--compensation_failed {
+  background: #ef4444;
+}
+
+.executions-page__timeline-dot--running,
+.executions-page__timeline-dot--compensating {
+  background: #3b82f6;
+  animation: pulse-dot 1.5s infinite ease-in-out;
+}
+
+.executions-page__timeline-dot--skipped {
+  background: var(--text-p);
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 0.7;
+  }
+}
+
+.executions-page__timeline-step-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.executions-page__timeline-step-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-h);
+}
+
+.executions-page__timeline-step-num {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-p);
+  text-transform: uppercase;
+}
+
+.executions-page__timeline-node-type {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--border);
+  color: var(--text-p);
+}
+
+.executions-page__timeline-step-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.executions-page__timeline-node-id {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--surface, var(--bg));
+  color: var(--text-p);
+}
+
+.executions-page__timeline-slowest-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 999px;
+  padding: 1px 8px;
+  line-height: 1.4;
+}
+
+:root[data-theme="dark"] .executions-page__timeline-slowest-badge {
+  color: #fbbf24;
+}
+
+.executions-page__timeline-step-details {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-p);
+}
+
+.executions-page__timeline-timestamp {
+  font-size: 12px;
+  color: var(--text-p);
+}
+
+.executions-page__timeline-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.executions-page__timeline-step--end .executions-page__timeline-tag {
+  background: var(--text-p);
+}
+
+.executions-page__timeline-step--slowest .executions-page__timeline-step-body {
+  border-left: 2px solid rgba(245, 158, 11, 0.6);
+  padding-left: 10px;
+}

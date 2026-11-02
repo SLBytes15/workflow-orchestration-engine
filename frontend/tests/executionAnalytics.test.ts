@@ -167,11 +167,13 @@ describe("execution analytics API client and helpers", () => {
   });
 
   describe("formatPercentage", () => {
-    it("converts decimal ratio to percentage exactly once", () => {
-      assert.equal(formatPercentage(0.8235), "82.35%");
-      assert.equal(formatPercentage(0.1765), "17.65%");
-      assert.equal(formatPercentage(1), "100%");
-      assert.equal(formatPercentage(0.5), "50%");
+    it("formats percentage values on a 0-100 scale correctly", () => {
+      assert.equal(formatPercentage(100), "100%");
+      assert.equal(formatPercentage(50), "50%");
+      assert.equal(formatPercentage(75.5), "75.5%");
+      assert.equal(formatPercentage(82.35), "82.35%");
+      assert.equal(formatPercentage(17.65), "17.65%");
+      assert.equal(formatPercentage(0.5), "0.5%");
     });
 
     it("handles zero safely", () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { getWorkflows, type CreatedWorkflow } from '../api/workflowApi'
 import {
   getExecution,
@@ -23,6 +23,7 @@ import {
   formatPercentage,
   formatDuration,
   calculateCurrentlyRunning,
+  buildExecutionTimeline,
 } from '../executionHelpers'
 import './ExecutionsPage.css'
 
@@ -35,31 +36,6 @@ const PAGE_SIZE = 20
 
 function getId(item: CreatedWorkflow): string {
   return String(item.id ?? item._id ?? '')
-}
-function sanitizeErrorMessage(message: string): string {
-  const cleaned = message
-    .replace(/https?:\/\/\S+/gi, '[technical details hidden]')
-    .replace(/\b(?:at\s+\S+.*)/gi, '[technical details hidden]')
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-
-  if (!cleaned) {
-    return 'An unexpected error occurred.'
-  }
-
-  return cleaned.length > 240
-    ? `${cleaned.slice(0, 237)}...`
-    : cleaned
-}
-
-function getErrorText(error: WorkflowExecution['error']): string {
-  const message =
-    typeof error === 'string'
-      ? error
-      : error?.message ?? ''
-
-  return sanitizeErrorMessage(message)
 }
 
 function getStatusLabel(
@@ -151,6 +127,7 @@ function ExecutionsPage({
   const [summaryError, setSummaryError] = useState('')
 
   const [details, setDetails] = useState<WorkflowExecution | null>(null)
+  const timeline = useMemo(() => buildExecutionTimeline(details), [details])
   const [detailsLoadingId, setDetailsLoadingId] = useState('')
   const [detailsError, setDetailsError] = useState('')
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
@@ -1199,7 +1176,161 @@ function ExecutionsPage({
                   </div>
                 )}
 
-                <h3>Node results</h3>
+                {/* Execution Timeline & Node Duration Insights */}
+                <section
+                  className="executions-page__timeline-section"
+                  aria-label="Execution timeline and node duration insights"
+                >
+                  <div className="executions-page__timeline-header">
+                    <h3>Execution Timeline & Insights</h3>
+                    <span className="executions-page__timeline-step-count">
+                      {timeline.steps.length} {timeline.steps.length === 1 ? 'step' : 'steps'}
+                    </span>
+                  </div>
+
+                  <div className="executions-page__timeline-metrics-grid">
+                    <div className="executions-page__timeline-metric">
+                      <span className="executions-page__timeline-metric-label">Execution Duration</span>
+                      <span className="executions-page__timeline-metric-value">{timeline.totalDurationText}</span>
+                    </div>
+
+                    <div className="executions-page__timeline-metric">
+                      <span className="executions-page__timeline-metric-label">Execution Status</span>
+                      <span className={`executions-page__status ${getStatusClass(details.status)}`}>
+                        {getStatusLabel(details.status)}
+                      </span>
+                    </div>
+
+                    {timeline.slowestNode && (
+                      <div className="executions-page__timeline-metric executions-page__timeline-metric--slowest">
+                        <span className="executions-page__timeline-metric-label">Slowest Node</span>
+                        <span
+                          className="executions-page__timeline-metric-value"
+                          title={`${timeline.slowestNode.label} (${timeline.slowestNode.durationText})`}
+                        >
+                          {timeline.slowestNode.label} ({timeline.slowestNode.durationText})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {timeline.failedStep && (
+                    <div className="executions-page__timeline-failure-box" role="alert">
+                      <div className="executions-page__timeline-failure-title">
+                        <strong>Failed at Step {timeline.failedStep.stepNumber}: {timeline.failedStep.label}</strong>
+                        <code>{timeline.failedStep.nodeId}</code>
+                      </div>
+                      {timeline.failedStep.error && (
+                        <p className="executions-page__timeline-failure-message">
+                          {timeline.failedStep.error}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {!timeline.steps.length ? (
+                    <p className="executions-page__empty-node-results">
+                      No node execution steps were recorded for this execution.
+                    </p>
+                  ) : (
+                    <ol className="executions-page__timeline-list" aria-label="Sequential execution steps">
+                      <li className="executions-page__timeline-step executions-page__timeline-step--start">
+                        <div className="executions-page__timeline-node-marker" aria-hidden="true">
+                          <span className="executions-page__timeline-dot executions-page__timeline-dot--start" />
+                        </div>
+                        <div className="executions-page__timeline-step-body">
+                          <div className="executions-page__timeline-step-title">
+                            <span className="executions-page__timeline-tag">Start</span>
+                            <strong>Execution Started</strong>
+                          </div>
+                          <span className="executions-page__timeline-timestamp">
+                            {details.startedAt ? formatDate(details.startedAt) : 'Start time unavailable'}
+                          </span>
+                        </div>
+                      </li>
+
+                      {timeline.steps.map((step) => (
+                        <li
+                          key={`timeline-${step.stepNumber}-${step.nodeId}`}
+                          className={`executions-page__timeline-step executions-page__timeline-step--${step.status}${step.isSlowest ? ' executions-page__timeline-step--slowest' : ''}`}
+                        >
+                          <div className="executions-page__timeline-node-marker" aria-hidden="true">
+                            <span className={`executions-page__timeline-dot executions-page__timeline-dot--${step.status}`} />
+                          </div>
+                          <div className="executions-page__timeline-step-body">
+                            <div className="executions-page__timeline-step-title">
+                              <span className="executions-page__timeline-step-num">Step {step.stepNumber}</span>
+                              <span className="executions-page__timeline-node-type">{step.nodeType || 'node'}</span>
+                              <strong className="executions-page__timeline-step-label">{step.label}</strong>
+                              <code className="executions-page__timeline-node-id">{step.nodeId}</code>
+                              <span className={`executions-page__status executions-page__status--${step.status}`}>
+                                {step.status}
+                              </span>
+                              {step.isSlowest && (
+                                <span className="executions-page__timeline-slowest-badge">
+                                  Slowest node
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="executions-page__timeline-step-details">
+                              <span className="executions-page__timeline-duration">
+                                Duration: <strong>{step.durationText}</strong>
+                              </span>
+                            </div>
+
+                            {step.error && (
+                              <p className="executions-page__error" role="status">
+                                Error: {step.error}
+                              </p>
+                            )}
+
+                            {step.compensation && (
+                              <div className="executions-page__compensation">
+                                <p>
+                                  <strong>Compensation status:</strong>{' '}
+                                  <span className={`executions-page__status executions-page__status--${step.compensation.status}`}>
+                                    {step.compensation.status}
+                                  </span>
+                                </p>
+                                <p>
+                                  <strong>Compensation duration:</strong> {step.compensation.durationText}
+                                </p>
+                                {step.compensation.error && (
+                                  <p className="executions-page__error">
+                                    Compensation error: {step.compensation.error}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+
+                      <li className={`executions-page__timeline-step executions-page__timeline-step--end executions-page__timeline-step--${details.status}`}>
+                        <div className="executions-page__timeline-node-marker" aria-hidden="true">
+                          <span className={`executions-page__timeline-dot executions-page__timeline-dot--${details.status}`} />
+                        </div>
+                        <div className="executions-page__timeline-step-body">
+                          <div className="executions-page__timeline-step-title">
+                            <span className="executions-page__timeline-tag">End</span>
+                            <strong>Execution {getStatusLabel(details.status)}</strong>
+                            <span className={`executions-page__status ${getStatusClass(details.status)}`}>
+                              {getStatusLabel(details.status)}
+                            </span>
+                          </div>
+                          <span className="executions-page__timeline-timestamp">
+                            {details.completedAt
+                              ? `Completed at: ${formatDate(details.completedAt)} (${timeline.totalDurationText})`
+                              : 'Execution in progress'}
+                          </span>
+                        </div>
+                      </li>
+                    </ol>
+                  )}
+                </section>
+
+                <h3>Node outputs & details</h3>
 
                 {!details.nodeResults?.length ? (
                   <p className="executions-page__empty-node-results">

@@ -339,6 +339,7 @@ export function createExecutionService(
       tenantId: Types.ObjectId,
       workflowIdValue: string,
       input: Record<string, unknown> = {},
+      options?: { enableForwardCheckpoints?: boolean; executionId?: Types.ObjectId },
     ) {
       const workflowId = objectId(workflowIdValue, "workflowId");
       const workflow = await dependencies.findWorkflow(tenantId, workflowId);
@@ -351,7 +352,7 @@ export function createExecutionService(
         );
       }
 
-      const record = await dependencies.createExecution({
+      const createPayload: Record<string, unknown> = {
         tenantId,
         workflowId,
         workflowVersion: workflow.version,
@@ -362,9 +363,13 @@ export function createExecutionService(
         error: null,
         startedAt: null,
         completedAt: null,
-      });
+      };
+      if (options?.executionId) {
+        createPayload._id = options.executionId;
+      }
 
-      const executionId = record._id as Types.ObjectId;
+      const record = await dependencies.createExecution(createPayload);
+      const executionId = (record._id ?? options?.executionId) as Types.ObjectId;
       const startedAt = new Date();
 
       const runningExecution = await dependencies.updateExecution(
@@ -411,8 +416,12 @@ export function createExecutionService(
         } catch {
           throw new ExecutionServiceError(
             500,
-            "COMPENSATION_CHECKPOINT_FAILED",
-            checkpoint.stage === "terminal"
+            checkpoint.stage === "forward"
+              ? "FORWARD_CHECKPOINT_FAILED"
+              : "COMPENSATION_CHECKPOINT_FAILED",
+            checkpoint.stage === "forward"
+              ? "A forward node completed, but its checkpoint could not be persisted."
+              : checkpoint.stage === "terminal"
               ? "A compensation handler may have run, but its terminal checkpoint could not be confirmed. Do not assume it succeeded; compensation will not be replayed automatically."
               : "Unable to persist the compensation checkpoint. No automatic compensation replay will be attempted.",
           );
@@ -420,8 +429,12 @@ export function createExecutionService(
         if (!saved) {
           throw new ExecutionServiceError(
             500,
-            "COMPENSATION_CHECKPOINT_FAILED",
-            checkpoint.stage === "terminal"
+            checkpoint.stage === "forward"
+              ? "FORWARD_CHECKPOINT_FAILED"
+              : "COMPENSATION_CHECKPOINT_FAILED",
+            checkpoint.stage === "forward"
+              ? "A forward node completed, but its checkpoint could not be confirmed."
+              : checkpoint.stage === "terminal"
               ? "A compensation handler may have run, but its terminal checkpoint could not be confirmed. Do not assume it succeeded; compensation will not be replayed automatically."
               : "Unable to persist the compensation checkpoint. No automatic compensation replay will be attempted.",
           );
@@ -432,8 +445,12 @@ export function createExecutionService(
         ) {
           throw new ExecutionServiceError(
             500,
-            "COMPENSATION_CHECKPOINT_FAILED",
-            checkpoint.stage === "terminal"
+            checkpoint.stage === "forward"
+              ? "FORWARD_CHECKPOINT_FAILED"
+              : "COMPENSATION_CHECKPOINT_FAILED",
+            checkpoint.stage === "forward"
+              ? "The forward checkpoint response did not confirm the persisted state."
+              : checkpoint.stage === "terminal"
               ? "A compensation handler may have run, but its terminal checkpoint could not be confirmed. Do not assume it succeeded; compensation will not be replayed automatically."
               : "The compensation checkpoint response did not confirm the persisted state. No automatic replay will be attempted.",
           );
@@ -443,6 +460,13 @@ export function createExecutionService(
           saved.nodeResults as RuntimeExecutionResult["nodeResults"];
         safeNotify(saved);
       };
+
+      const forwardCheckpointsEnabled = Boolean(
+        options?.enableForwardCheckpoints ??
+        (workflow as any)?.executionPolicy?.enableForwardCheckpoints ??
+        (workflow?.graph as any)?.executionPolicy?.enableForwardCheckpoints ??
+        false,
+      );
 
       let result: RuntimeExecutionResult;
       try {
@@ -454,6 +478,7 @@ export function createExecutionService(
             executionId: String(executionId),
             workflowId: String(workflowId),
             tenantId: String(tenantId),
+            enableForwardCheckpoints: forwardCheckpointsEnabled,
           },
           persistCheckpoint,
         );
@@ -482,7 +507,7 @@ export function createExecutionService(
         status: result.status,
         nodeResults: result.nodeResults,
         error: result.error ?? null,
-        completedAt: new Date(),
+        completedAt: new Date(Math.max(startedAt.getTime(), Date.now())),
       };
 
       let finalExecution;

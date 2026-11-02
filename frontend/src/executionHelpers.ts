@@ -184,15 +184,18 @@ export function closeDrawerState(): ExecutionDrawerState {
   }
 }
 
-export function formatPercentage(ratio: number | null | undefined): string {
-  if (ratio === null || ratio === undefined || Number.isNaN(ratio)) {
+/**
+ * Formats a percentage value (0–100 scale) returned by the backend analytics API.
+ * e.g. 100 -> '100%', 82.35 -> '82.35%', 0 -> '0%', null/undefined/NaN -> '—'.
+ */
+export function formatPercentage(percentage: number | null | undefined): string {
+  if (percentage === null || percentage === undefined || Number.isNaN(percentage)) {
     return '—'
   }
-  if (ratio === 0) {
+  if (percentage === 0) {
     return '0%'
   }
-  const pct = ratio * 100
-  const formatted = Number(pct.toFixed(2))
+  const formatted = Number(percentage.toFixed(2))
   return `${formatted}%`
 }
 
@@ -221,5 +224,208 @@ export function calculateCurrentlyRunning(
 ): number {
   if (!summary) return 0
   return (summary.running ?? 0) + (summary.compensating ?? 0)
+}
+
+export interface NodeDurationResult {
+  durationMs: number | null
+  durationText: string
+  isValid: boolean
+}
+
+/**
+ * Calculates and formats duration between startedAt and completedAt.
+ * If either timestamp is missing, invalid, or completedAt < startedAt, returns 'Duration unavailable'.
+ */
+export function formatNodeDuration(
+  startedAt?: string | Date | null,
+  completedAt?: string | Date | null,
+): NodeDurationResult {
+  if (!startedAt || !completedAt) {
+    return { durationMs: null, durationText: 'Duration unavailable', isValid: false }
+  }
+
+  const start = new Date(startedAt).getTime()
+  const end = new Date(completedAt).getTime()
+
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) {
+    return { durationMs: null, durationText: 'Duration unavailable', isValid: false }
+  }
+
+  const durationMs = end - start
+
+  let durationText: string
+  if (durationMs < 1000) {
+    durationText = `${Math.round(durationMs)} ms`
+  } else if (durationMs < 60000) {
+    durationText = `${(durationMs / 1000).toFixed(1)} s`
+  } else {
+    const mins = Math.floor(durationMs / 60000)
+    const secs = Math.round((durationMs % 60000) / 1000)
+    durationText = `${mins} minute${mins !== 1 ? 's' : ''} ${secs} second${secs !== 1 ? 's' : ''}`
+  }
+
+  return { durationMs, durationText, isValid: true }
+}
+
+export interface TimelineNodeStep {
+  stepNumber: number
+  nodeId: string
+  label: string
+  nodeType?: string
+  status: 'completed' | 'failed' | 'skipped' | string
+  durationMs: number | null
+  durationText: string
+  hasValidDuration: boolean
+  isSlowest: boolean
+  error?: string
+  compensation?: {
+    status: string
+    startedAt?: string | null
+    completedAt?: string | null
+    durationText: string
+    error?: string
+  }
+  output?: unknown
+}
+
+export interface ExecutionTimelineData {
+  startedAt: string | null
+  completedAt: string | null
+  totalDurationMs: number | null
+  totalDurationText: string
+  executionStatus: string
+  steps: TimelineNodeStep[]
+  slowestNode: TimelineNodeStep | null
+  hasAnyValidNodeDuration: boolean
+  failedStep: TimelineNodeStep | null
+}
+
+/**
+ * Transforms an execution and its graph snapshot into a visual timeline model.
+ * Preserves actual sequential execution order from nodeResults.
+ */
+export function buildExecutionTimeline(
+  execution: WorkflowExecution | null | undefined,
+): ExecutionTimelineData {
+  if (!execution) {
+    return {
+      startedAt: null,
+      completedAt: null,
+      totalDurationMs: null,
+      totalDurationText: 'Duration unavailable',
+      executionStatus: 'queued',
+      steps: [],
+      slowestNode: null,
+      hasAnyValidNodeDuration: false,
+      failedStep: null,
+    }
+  }
+
+  const totalTiming = formatNodeDuration(execution.startedAt, execution.completedAt)
+
+  // Map graph snapshot nodes for friendly labels and node types
+  const nodeLabelMap = new Map<string, { label: string; type?: string }>()
+  if (execution.graphSnapshot?.nodes && Array.isArray(execution.graphSnapshot.nodes)) {
+    for (const node of execution.graphSnapshot.nodes) {
+      if (node && typeof node.id === 'string') {
+        nodeLabelMap.set(node.id, {
+          label: node.data?.label?.trim() || node.id,
+          type: node.type,
+        })
+      }
+    }
+  }
+
+  const nodeResults = Array.isArray(execution.nodeResults) ? execution.nodeResults : []
+  const steps: TimelineNodeStep[] = []
+  let failedStep: TimelineNodeStep | null = null
+
+  for (let i = 0; i < nodeResults.length; i++) {
+    const nr = nodeResults[i]
+    if (!nr || typeof nr.nodeId !== 'string') continue
+
+    const meta = nodeLabelMap.get(nr.nodeId)
+    const label = meta?.label || nr.nodeId
+    const nodeType = meta?.type || 'task'
+
+    const nodeTiming = formatNodeDuration(nr.startedAt, nr.completedAt)
+
+    let compData: TimelineNodeStep['compensation'] = undefined
+    if (nr.compensation) {
+      const compTiming = formatNodeDuration(
+        nr.compensation.startedAt,
+        nr.compensation.completedAt,
+      )
+      const compErrorMsg =
+        typeof nr.compensation.error === 'string'
+          ? nr.compensation.error
+          : typeof nr.compensation.error === 'object' &&
+              nr.compensation.error !== null &&
+              'message' in nr.compensation.error
+            ? String((nr.compensation.error as { message?: unknown }).message ?? '')
+            : undefined
+
+      compData = {
+        status: nr.compensation.status,
+        startedAt: nr.compensation.startedAt ? String(nr.compensation.startedAt) : null,
+        completedAt: nr.compensation.completedAt ? String(nr.compensation.completedAt) : null,
+        durationText: compTiming.durationText,
+        error: compErrorMsg ? sanitizeErrorMessage(compErrorMsg) : undefined,
+      }
+    }
+
+    const errorMsg =
+      typeof nr.error === 'string'
+        ? nr.error
+        : typeof nr.error === 'object' && nr.error !== null && 'message' in nr.error
+          ? String((nr.error as { message?: unknown }).message ?? '')
+          : undefined
+
+    const step: TimelineNodeStep = {
+      stepNumber: i + 1,
+      nodeId: nr.nodeId,
+      label,
+      nodeType,
+      status: nr.status,
+      durationMs: nodeTiming.durationMs,
+      durationText: nodeTiming.durationText,
+      hasValidDuration: nodeTiming.isValid,
+      isSlowest: false,
+      error: errorMsg ? sanitizeErrorMessage(errorMsg) : undefined,
+      compensation: compData,
+      output: nr.output,
+    }
+
+    if (nr.status === 'failed' && !failedStep) {
+      failedStep = step
+    }
+
+    steps.push(step)
+  }
+
+  // Find slowest node only if at least one node has a valid positive duration
+  const validDurationSteps = steps.filter(
+    (s) => s.hasValidDuration && s.durationMs !== null && s.durationMs > 0,
+  )
+
+  let slowestNode: TimelineNodeStep | null = null
+  if (validDurationSteps.length > 0) {
+    slowestNode = validDurationSteps.reduce((max, curr) =>
+      (curr.durationMs ?? 0) > (max.durationMs ?? 0) ? curr : max,
+    )
+    slowestNode.isSlowest = true
+  }
+
+  return {
+    startedAt: execution.startedAt ? String(execution.startedAt) : null,
+    completedAt: execution.completedAt ? String(execution.completedAt) : null,
+    totalDurationMs: totalTiming.durationMs,
+    totalDurationText: totalTiming.durationText,
+    executionStatus: execution.status,
+    steps,
+    slowestNode,
+    hasAnyValidNodeDuration: validDurationSteps.length > 0,
+    failedStep,
+  }
 }
 

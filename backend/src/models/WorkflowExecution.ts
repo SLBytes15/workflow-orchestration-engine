@@ -16,6 +16,8 @@ interface NodeResult {
   output?: unknown;
   error?: unknown;
   compensation?: NodeCompensation;
+  startedAt?: Date | null;
+  completedAt?: Date | null;
 }
 
 const NODE_RESULT_STATUSES = new Set<string>([
@@ -131,6 +133,14 @@ const nodeResultSchema = new Schema<NodeResult>(
     compensation: {
       type: nodeCompensationSchema,
       required: false,
+      default: undefined,
+    },
+    startedAt: {
+      type: Date,
+      default: undefined,
+    },
+    completedAt: {
+      type: Date,
       default: undefined,
     },
   },
