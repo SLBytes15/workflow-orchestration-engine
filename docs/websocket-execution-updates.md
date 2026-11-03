@@ -2,15 +2,12 @@
 
 ## Status and evidence labels
 
-This document separates the team's **APPROVED DESIGN** from implementation
-evidence. The initial 1 November inspection used the checked-out
-`member/mahak` HEAD `bd2775c33179b9363f99e7052b8193d3a5b0d8d7` and stale
-remote-tracking refs. The branch was later fast-forwarded to
-`b15d510be7c6dae8e263193ff30acbbe620562f4`; the documentation change was
-restored from `stash@{0}`. Current status statements below refer to that
-fast-forwarded branch and the explicitly identified frontend reference. The
-pre-fetch section is retained as historical context only and is superseded
-where it conflicts with the later evidence.
+This document separates the team's **APPROVED DESIGN** from what is visible
+in this repository.
+
+This document preserves the original approved design and QA scenarios from
+the `member/mahak` branch snapshot. The current implementation verification
+section below records the findings from `member/swathi` as of 2026-11-01.
 
 - **APPROVED DESIGN** — agreed MVP behavior, not proof of implementation.
 - **IMPLEMENTED** — present in the inspected source.
@@ -47,10 +44,11 @@ for the full contract and verification boundaries.
 
 ### Git references and reported commits
 
-`git fetch --all` succeeded. The local branch was subsequently fast-forwarded
-to `b15d510be7c6dae8e263193ff30acbbe620562f4` and matches
-`origin/member/mahak`. Updated remote heads recorded during the investigation
-include:
+**IMPLEMENTED:** The original member/mahak branch snapshot recorded REST-only
+execution updates. See the current implementation verification above for the
+member/swathi findings.
+
+## B. Architecture
 
 | Remote ref | Fetched HEAD |
 |---|---|
@@ -694,3 +692,42 @@ E2E verification and does not establish live MongoDB persistence or deployed
 integration. No build or live end-to-end check was run. Member-reported
 results are explicitly identified; all ten manual E2E checklist items remain
 **NOT RUN**.
+
+## Latest backend verification update — 2026-11-02
+
+This update supersedes the earlier NOT VERIFIED findings about production
+Express registration and WebSocket server attachment.
+
+**VERIFIED — Express ticket route registration**
+- `backend/src/app.ts` imports `executionWsTicketRoutes`.
+- `app.use("/api/executions", executionWsTicketRoutes)` registers the router.
+- The router declares `POST /ws-ticket`, giving the complete endpoint
+  `POST /api/executions/ws-ticket`.
+- `backend/src/routes/executionWsTicket.routes.test.ts` exercises the router
+  through an HTTP server and verifies authentication and ticket responses.
+
+**VERIFIED — WebSocket HTTP server attachment**
+- `backend/src/index.ts` attaches `executionEventHub` to the existing HTTP
+  server through `executionEventHub.attach(server)`.
+- Attachment occurs after the HTTP server starts listening.
+- The WebSocket endpoint uses the same HTTP server; it does not create a
+  separate listener.
+- `backend/src/index.test.ts` verifies attachment to the same server.
+
+**VERIFIED — graceful shutdown**
+- `backend/src/index.ts` closes the WebSocket service before closing the
+  HTTP server.
+- `backend/src/index.test.ts` verifies this shutdown order.
+
+**Test evidence inspected**
+- `backend/src/routes/executionWsTicket.routes.test.ts`
+- `backend/src/services/executionWebSocket.test.ts`
+- `backend/src/services/executionRealtime.integration.test.ts`
+- `backend/src/index.test.ts`
+
+The route-level HTTP test and in-process WebSocket tests do not establish
+that a deployed production environment has been tested.
+
+**NOT RUN — live deployed end-to-end test**
+- No live deployed end-to-end test was performed in this verification.
+- No experimental writes against shared MongoDB Atlas M0 were performed.

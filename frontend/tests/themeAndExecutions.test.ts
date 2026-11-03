@@ -14,9 +14,9 @@ describe("theme preference management", () => {
     assert.equal(THEME_STORAGE_KEY, "zaalima_theme_preference");
   });
 
-  it("returns dark mode as default when no storage or window preference exists", () => {
+  it("returns light mode as default when no saved preference exists", () => {
     const theme = getInitialTheme();
-    assert.ok(theme === "dark" || theme === "light");
+    assert.equal(theme, "light");
   });
 });
 

@@ -16,6 +16,8 @@ interface NodeResult {
   output?: unknown;
   error?: unknown;
   compensation?: NodeCompensation;
+  startedAt?: Date | null;
+  completedAt?: Date | null;
 }
 
 const NODE_RESULT_STATUSES = new Set<string>([
@@ -133,6 +135,14 @@ const nodeResultSchema = new Schema<NodeResult>(
       required: false,
       default: undefined,
     },
+    startedAt: {
+      type: Date,
+      default: undefined,
+    },
+    completedAt: {
+      type: Date,
+      default: undefined,
+    },
   },
   { _id: false, strict: false },
 );
@@ -236,6 +246,11 @@ workflowExecutionSchema.pre("validate", function () {
 workflowExecutionSchema.index({
   tenantId: 1,
   workflowId: 1,
+  createdAt: -1,
+});
+
+workflowExecutionSchema.index({
+  tenantId: 1,
   createdAt: -1,
 });
 

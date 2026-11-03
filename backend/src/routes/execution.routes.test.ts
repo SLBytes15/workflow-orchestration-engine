@@ -10,6 +10,10 @@ import {
   createExecutionRouter,
 } from "./execution.routes";
 import { ExecutionServiceError } from "../services/execution.service";
+import {
+  createMemoryIdempotencyDependencies,
+  IdempotencyService,
+} from "../services/executionIdempotency";
 
 const tenantId = new Types.ObjectId();
 const otherTenantId = new Types.ObjectId();
@@ -23,6 +27,8 @@ let receivedWorkflowId: string | undefined;
 let receivedExecutionId: string | undefined;
 let receivedLimit: unknown;
 let receivedCursor: unknown;
+let receivedSummaryOptions: any;
+let summaryResult: any;
 
 let mode: "normal" | "execution-error" | "not-found" = "normal";
 let historyRecords: Record<string, any>[] = [];
@@ -148,13 +154,87 @@ const service = {
       },
     };
   },
+
+  async getExecutionSummary(tenant: Types.ObjectId, options?: Record<string, unknown>) {
+    receivedTenantId = String(tenant);
+    receivedSummaryOptions = options;
+
+    if (options?.workflowId !== undefined) {
+      if (typeof options.workflowId !== "string" || !/^[a-f\d]{24}$/i.test(options.workflowId)) {
+        throw new ExecutionServiceError(
+          400,
+          "VALIDATION_ERROR",
+          "Invalid workflow ID",
+        );
+      }
+    }
+
+    if (options?.from !== undefined) {
+      if (typeof options.from !== "string" || Number.isNaN(Date.parse(options.from))) {
+        throw new ExecutionServiceError(
+          400,
+          "VALIDATION_ERROR",
+          "Invalid 'from' date string",
+        );
+      }
+    }
+
+    if (options?.to !== undefined) {
+      if (typeof options.to !== "string" || Number.isNaN(Date.parse(options.to))) {
+        throw new ExecutionServiceError(
+          400,
+          "VALIDATION_ERROR",
+          "Invalid 'to' date string",
+        );
+      }
+    }
+
+    if (options?.from && options?.to) {
+      if (new Date(options.from as string) > new Date(options.to as string)) {
+        throw new ExecutionServiceError(
+          400,
+          "VALIDATION_ERROR",
+          "'from' date cannot be after 'to' date",
+        );
+      }
+    }
+
+    if (mode === "execution-error") {
+      throw new Error("database failure");
+    }
+
+    return (
+      summaryResult ?? {
+        summary: {
+          total: 10,
+          completed: 8,
+          failed: 1,
+          running: 1,
+          queued: 0,
+          compensating: 0,
+          compensated: 0,
+          compensationFailed: 0,
+          unsuccessful: 1,
+          successRate: 0.8889,
+          failureRate: 0.1111,
+          avgDurationMs: 1500,
+        },
+        filter: {
+          workflowId: options?.workflowId ?? null,
+          from: options?.from ?? null,
+          to: options?.to ?? null,
+        },
+      }
+    );
+  },
 };
 
 before(async () => {
   const app = express();
+  const testIdempotencyService = new IdempotencyService(createMemoryIdempotencyDependencies());
   app.use(express.json());
-  app.use("/api/workflows", createExecutionRouter(resolver, service as any));
-  app.use("/api/executions", createExecutionRouter(resolver, service as any));
+  app.use("/api/workflows", createExecutionRouter(resolver, service as any, testIdempotencyService));
+  app.use("/api/executions", createExecutionRouter(resolver, service as any, testIdempotencyService));
   app.use(errorHandler);
 
   await new Promise<void>((resolve) => {
@@ -188,6 +268,8 @@ function resetState() {
   receivedLimit = undefined;
   receivedCursor = undefined;
   receivedInput = undefined;
+  receivedSummaryOptions = undefined;
+  summaryResult = undefined;
   historyRecords = [];
   execution.status = "completed";
   execution.error = null;
@@ -667,4 +749,340 @@ test("does not return another tenant's execution history or compensation metadat
     hasMore: false,
     nextCursor: null,
   });
+});
+
+test("rejects GET /api/executions/summary without an API key", async () => {
+  resetState();
+  const response = await fetch(`${baseUrl}/api/executions/summary`);
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "UNAUTHORIZED",
+      message: "A valid API key is required",
+    },
+  });
+});
+
+test("returns execution summary with default filters for authenticated tenant", async () => {
+  resetState();
+  const response = await fetch(`${baseUrl}/api/executions/summary`, {
+    headers: authHeaders(),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedTenantId, String(tenantId));
+  assert.deepEqual(receivedSummaryOptions, {
+    workflowId: undefined,
+    from: undefined,
+    to: undefined,
+  });
+
+  const body = await response.json();
+  assert.equal(body.summary.total, 10);
+  assert.equal(body.summary.completed, 8);
+  assert.equal(body.summary.unsuccessful, 1);
+  assert.equal(body.filter.workflowId, null);
+  assert.equal(body.filter.from, null);
+  assert.equal(body.filter.to, null);
+});
+
+test("passes workflowId, from, and to query parameters to service", async () => {
+  resetState();
+  const validWorkflowId = new Types.ObjectId().toString();
+  const from = "2026-10-01T00:00:00.000Z";
+  const to = "2026-10-15T23:59:59.999Z";
+
+  const response = await fetch(
+    `${baseUrl}/api/executions/summary?workflowId=${validWorkflowId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedTenantId, String(tenantId));
+  assert.deepEqual(receivedSummaryOptions, {
+    workflowId: validWorkflowId,
+    from,
+    to,
+  });
+
+  const body = await response.json();
+  assert.equal(body.filter.workflowId, validWorkflowId);
+  assert.equal(body.filter.from, from);
+  assert.equal(body.filter.to, to);
+});
+
+test("returns 400 when workflowId query parameter is invalid", async () => {
+  resetState();
+  const response = await fetch(
+    `${baseUrl}/api/executions/summary?workflowId=invalid-id`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "VALIDATION_ERROR");
+  assert.equal(body.error.message, "Invalid workflow ID");
+});
+
+test("returns 400 when from date string is invalid", async () => {
+  resetState();
+  const response = await fetch(
+    `${baseUrl}/api/executions/summary?from=not-a-date`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "VALIDATION_ERROR");
+  assert.equal(body.error.message, "Invalid 'from' date string");
+});
+
+test("returns 400 when to date string is invalid", async () => {
+  resetState();
+  const response = await fetch(
+    `${baseUrl}/api/executions/summary?to=not-a-date`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "VALIDATION_ERROR");
+  assert.equal(body.error.message, "Invalid 'to' date string");
+});
+
+test("returns 400 when from date is after to date", async () => {
+  resetState();
+  const from = "2026-10-20T00:00:00.000Z";
+  const to = "2026-10-10T00:00:00.000Z";
+
+  const response = await fetch(
+    `${baseUrl}/api/executions/summary?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    { headers: authHeaders() },
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, "VALIDATION_ERROR");
+  assert.equal(body.error.message, "'from' date cannot be after 'to' date");
+});
+
+test("does not collide with /api/executions/:executionId route", async () => {
+  resetState();
+  // Call /api/executions/summary
+  const summaryRes = await fetch(`${baseUrl}/api/executions/summary`, {
+    headers: authHeaders(),
+  });
+  assert.equal(summaryRes.status, 200);
+  assert.equal(receivedExecutionId, undefined);
+
+  // Call /api/executions/:executionId
+  resetState();
+  const detailRes = await fetch(`${baseUrl}/api/executions/${executionId}`, {
+    headers: authHeaders(),
+  });
+  assert.equal(detailRes.status, 200);
+  assert.equal(receivedExecutionId, String(executionId));
+});
+
+test("returns 404 when GET /api/workflows/summary is attempted", async () => {
+  resetState();
+  const response = await fetch(`${baseUrl}/api/workflows/summary`, {
+    headers: authHeaders(),
+  });
+  assert.equal(response.status, 404);
+});
+
+test("strictly scopes summary request to authenticated tenant", async () => {
+  resetState();
+  const response = await fetch(`${baseUrl}/api/executions/summary`, {
+    headers: { "x-api-key": "other-test-key" },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedTenantId, String(otherTenantId));
+});
+
+test("idempotent execution: returns cached execution for repeated identical request with Idempotency-Key", async () => {
+  resetState();
+  const key = "test-idempotency-key-1";
+  const body = JSON.stringify({ input: { amount: 100 } });
+
+  // 1. First execution
+  const res1 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body,
+    },
+  );
+
+  assert.equal(res1.status, 200);
+  const data1 = await res1.json();
+  assert.equal(data1.execution.id, String(executionId));
+
+  // 2. Second execution with identical payload and key
+  resetState();
+  receivedWorkflowId = undefined;
+
+  const res2 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body,
+    },
+  );
+
+  assert.equal(res2.status, 200);
+  const data2 = await res2.json();
+  assert.equal(data2.execution.id, String(executionId));
+  assert.deepEqual(data1, data2);
+});
+
+test("idempotent execution: rejects repeated request with same key but different payload with 409", async () => {
+  resetState();
+  const key = "test-idempotency-key-2";
+
+  // 1. First execution with amount 100
+  const res1 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body: JSON.stringify({ input: { amount: 100 } }),
+    },
+  );
+
+  assert.equal(res1.status, 200);
+
+  // 2. Second execution with same key but amount 200
+  const res2 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body: JSON.stringify({ input: { amount: 200 } }),
+    },
+  );
+
+  assert.equal(res2.status, 409);
+  const errBody = await res2.json();
+  assert.equal(errBody.error.code, "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH");
+});
+
+test("idempotent execution: scopes Idempotency-Key strictly per tenant", async () => {
+  resetState();
+  const key = "test-shared-key";
+  const body = JSON.stringify({ input: { amount: 50 } });
+
+  // 1. Tenant 1 uses key
+  const res1 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Idempotency-Key": key },
+      body,
+    },
+  );
+  assert.equal(res1.status, 200);
+
+  // 2. Tenant 2 uses same key
+  const res2 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { "x-api-key": "other-test-key", "content-type": "application/json", "Idempotency-Key": key },
+      body,
+    },
+  );
+  assert.equal(res2.status, 200);
+  assert.equal(receivedTenantId, String(otherTenantId));
+});
+
+test("idempotent execution: blocks concurrent in-flight request with 409 IDEMPOTENCY_KEY_IN_FLIGHT", async () => {
+  resetState();
+  const key = "test-concurrent-race-key";
+  const body = JSON.stringify({ input: { orderId: 999 } });
+
+  // Simulate a slow execution using a deferred promise
+  let finishExecution: () => void = () => {};
+  const originalStart = service.startExecution;
+  service.startExecution = async (tenant, id, input) => {
+    receivedTenantId = String(tenant);
+    receivedWorkflowId = id;
+    receivedInput = input;
+    await new Promise<void>((resolve) => {
+      finishExecution = resolve;
+    });
+    return execution;
+  };
+
+  try {
+    // 1. First request starts and stays in-flight
+    const req1Promise = fetch(
+      `${baseUrl}/api/workflows/${workflowId}/executions`,
+      {
+        method: "POST",
+        headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+        body,
+      },
+    );
+
+    // Give req1 a moment to reserve the key
+    await new Promise((r) => setTimeout(r, 10));
+
+    // 2. Concurrent second request arrives while req1 is in flight
+    const res2 = await fetch(
+      `${baseUrl}/api/workflows/${workflowId}/executions`,
+      {
+        method: "POST",
+        headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+        body,
+      },
+    );
+
+    assert.equal(res2.status, 409);
+    const body2 = await res2.json();
+    assert.equal(body2.error.code, "IDEMPOTENCY_KEY_IN_FLIGHT");
+
+    // Complete first request
+    finishExecution();
+    const res1 = await req1Promise;
+    assert.equal(res1.status, 200);
+  } finally {
+    service.startExecution = originalStart;
+  }
+});
+
+test("idempotent execution: execution error releases reserved key allowing subsequent retry", async () => {
+  resetState();
+  const key = "test-fail-release-key";
+  const body = JSON.stringify({ input: { retriable: true } });
+
+  // 1. Trigger failure
+  mode = "execution-error";
+  const res1 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body,
+    },
+  );
+  assert.equal(res1.status, 500);
+
+  // 2. Subsequent retry succeeds because key reservation was cleanly released
+  mode = "normal";
+  const res2 = await fetch(
+    `${baseUrl}/api/workflows/${workflowId}/executions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json", "Idempotency-Key": key },
+      body,
+    },
+  );
+  assert.equal(res2.status, 200);
+  const data2 = await res2.json();
+  assert.equal(data2.execution.id, String(executionId));
 });
