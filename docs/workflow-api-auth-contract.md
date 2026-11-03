@@ -16,7 +16,12 @@ requirements are complete.
 - `backend/src/middleware/tenantContext.middleware.ts` validates the format of a client-supplied `x-tenant-id`; this does not establish authorization.
 - The legacy `/api/test-tenant` endpoint uses the development-only in-memory `tenantMiddleware`/`apiKeyResolver`; workflow and execution REST routes use `tenantAuthMiddleware` and the database-backed resolver instead.
 - `/api/health` does not require authentication; it remains subject to the `/api` rate limiter.
-- This is REST authentication only; no WebSocket ticket-authentication endpoint or handshake is implemented.
+- REST workflow/execution routes and `POST /api/executions/ws-ticket` use this
+  database-backed API-key authentication. The ticket endpoint issues a
+  short-lived, single-use, in-memory ticket bound to the authenticated tenant;
+  the WebSocket handshake consumes that ticket at `/ws/executions`. This is
+  not durable or shared across server instances, and live deployment behavior
+  is not established by route/unit tests.
 - `backend/src/models/tenant.model.ts` is the canonical Mongoose Tenant model.
 - `backend/src/models/workflow.model.ts` is the canonical Mongoose Workflow model.
 - `backend/src/models/index.ts` exports TypeScript types, not the Mongoose models.

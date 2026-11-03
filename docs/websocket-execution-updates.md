@@ -21,6 +21,28 @@ where it conflicts with the later evidence.
   independently verified in this documentation task.
 - **SUPERSEDED** — historical finding that must not be read as current status.
 
+## Verification update — 3 November 2026
+
+The current assigned branch is `member/mahak` at `43e8b99`, matching
+`origin/member/mahak`. At the initial audit fetch, `origin/main` was
+`9f5e333` (20 commits ahead); the later follow-up fetch advanced it to
+`dde30bc` (22 commits ahead).
+The WebSocket ticket, hub, startup wiring, event mapping and post-persistence
+publication were re-inspected in the current source. The complete backend
+suite passed (374/374), including the in-process ticket, hub and realtime tests.
+The realtime integration test still uses injected in-memory persistence; this
+is not live MongoDB or deployed endpoint evidence.
+
+All manual scenarios in Section K remain **NOT RUN**. No shared/live database
+was used. The current branch does not contain the stale-socket callback guard
+present in the newer `origin/main` frontend source. The fetched main also adds
+optional realtime connection-status notifications; the two commits since
+`9f5e333` do not change backend WebSocket ticket or event-delivery source.
+These remote frontend changes and tests were inspected but not run. See the
+follow-up section in the 3 November audit in
+[`backend/WORKFLOW_VERIFICATION_REPORT.md`](../backend/WORKFLOW_VERIFICATION_REPORT.md)
+for the full contract and verification boundaries.
+
 ## Follow-up verification after fetch — 1 November 2026
 
 ### Git references and reported commits
