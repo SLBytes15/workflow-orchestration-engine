@@ -18,140 +18,29 @@ section below records the findings from `member/swathi` as of 2026-11-01.
   independently verified in this documentation task.
 - **SUPERSEDED** — historical finding that must not be read as current status.
 
-## Current implementation verification — 2026-11-01
+## Verification update — 3 November 2026
 
-This section records the implementation contract verified during the
-frontend/backend inspection on `member/swathi`. It is the current verification
-record and supersedes conflicting implementation-status statements in the
-original `member/mahak` branch snapshot below. Approved design and QA scenarios
-remain useful as design and test references; they are not automatically proof
-of production deployment or end-to-end testing.
+The current assigned branch is `member/mahak` at `43e8b99`, matching
+`origin/member/mahak`. At the initial audit fetch, `origin/main` was
+`9f5e333` (20 commits ahead); the later follow-up fetch advanced it to
+`dde30bc` (22 commits ahead).
+The WebSocket ticket, hub, startup wiring, event mapping and post-persistence
+publication were re-inspected in the current source. The complete backend
+suite passed (374/374), including the in-process ticket, hub and realtime tests.
+The realtime integration test still uses injected in-memory persistence; this
+is not live MongoDB or deployed endpoint evidence.
 
-### Verified ticket API and lifecycle
+All manual scenarios in Section K remain **NOT RUN**. No shared/live database
+was used. The current branch does not contain the stale-socket callback guard
+present in the newer `origin/main` frontend source. The fetched main also adds
+optional realtime connection-status notifications; the two commits since
+`9f5e333` do not change backend WebSocket ticket or event-delivery source.
+These remote frontend changes and tests were inspected but not run. See the
+follow-up section in the 3 November audit in
+[`backend/WORKFLOW_VERIFICATION_REPORT.md`](../backend/WORKFLOW_VERIFICATION_REPORT.md)
+for the full contract and verification boundaries.
 
-- The frontend requests a connection ticket using
-  `POST /api/executions/ws-ticket`.
-- The request sends the existing API key in the `X-API-Key` header.
-- The backend ticket router declares `POST /ws-ticket`; its route test mounts
-  that router under `/api/executions`.
-- The route uses tenant authentication and derives the tenant ID from
-  server-side request context. A client-supplied tenant ID is not used to
-  establish ticket ownership.
-- A successful response contains `ticket` and `expiresAt`.
-- Tickets have a 60-second lifetime. The backend generates a 32-byte
-  cryptographically random token encoded as base64url.
-- Ticket records contain the tenant ID and expiry time in an in-memory store.
-- A ticket is consumed once. Consumption removes the record, and expired,
-  missing, invalid, or previously consumed tickets are rejected.
-- The frontend validates that the returned ticket is a non-empty string and
-  that `expiresAt` is a valid future date.
-
-### WebSocket connection contract
-
-The WebSocket endpoint path is `/ws/executions`.
-
-The frontend builds the connection URL using the API base URL's protocol:
-`wss` for HTTPS and `ws` otherwise. It sends the ticket as the `ticket`
-query parameter:
-
-`/ws/executions?ticket=<single-use-ticket>`
-
-The API key is not placed in the WebSocket URL. The backend consumes the
-ticket when handling the WebSocket connection. Invalid tickets cause the
-socket to close with code `4401` and reason `Unauthorized`.
-
-### Tenant binding and delivery
-
-The ticket binds the connection to the tenant resolved by REST API-key
-authentication. The WebSocket service maintains sockets grouped by tenant ID
-and publishes an execution event only to that tenant's connected sockets.
-Client messages are ignored.
-
-### Event names and payload
-
-The verified event names are:
-
-| Event | Backend status mapping |
-|---|---|
-| `execution.updated` | `queued`, `running`, `compensating` |
-| `execution.completed` | `completed` |
-| `execution.failed` | `failed` |
-
-Each event uses this envelope and data structure:
-
-```json
-{
-  "type": "execution.updated",
-  "data": {
-    "executionId": "<execution id>",
-    "workflowId": "<workflow id>",
-    "status": "<persisted execution status>",
-    "updatedAt": "<ISO-8601 timestamp>"
-  }
-}
-```
-The `type` value changes according to the event mapping above. The four data fields remain the same. The status represents the persisted execution status.
-
-The persisted statuses also include `compensated` and `compensation_failed`. The current backend deliberately does not map these two statuses to `execution.completed` or `execution.failed`; no additional compensation event mapping is established by this contract.
-
-### Publish-after-persistence behavior
-
-The execution service awaits the relevant execution update before notifying the WebSocket publisher. This applies to the running transition, persisted checkpoints, and final execution update.
-
-Notification is best-effort: publisher/send failures are caught and do not change the persisted execution outcome or interrupt workflow execution. WebSocket notification is therefore not a substitute for successful persistence.
-
-### Frontend reconnect and REST fallback
-
-- The executions page continues to load execution history through REST.
-- The frontend obtains a fresh single-use ticket for each connection attempt.
-- The realtime client validates incoming event names and payload fields.
-- Reconnection uses bounded exponential backoff, up to 30 seconds.
-- After a successful reconnection, the frontend reloads execution history through REST to recover updates that may have been missed.
-- Manual refresh and REST history controls remain available while the socket is disconnected.
-- Cleanup stops reconnect attempts and closes the active socket.
-
-REST remains the source of truth for execution history and current persisted state. WebSocket notifications are an additional best-effort update channel.
-
-### Verification checklist
-
-**VERIFIED by source inspection**
-
-- [x] Ticket request method, path, API-key header, and response fields.
-- [x] 60-second ticket lifetime and frontend expiry validation.
-- [x] Cryptographically random ticket generation and single-use consumption.
-- [x] Server-derived tenant binding.
-- [x] WebSocket path and `ticket` query parameter.
-- [x] Event names, status mapping, and payload fields.
-- [x] Tenant-scoped socket delivery.
-- [x] Frontend validation, reconnect behavior, and REST history fallback.
-- [x] Execution persistence awaited before event notification.
-- [x] Notification failures isolated from workflow execution.
-
-**NOT VERIFIED in this inspection**
-
-- [ ] Production application registration/mounting of the ticket router.
-- [ ] Production attachment of the WebSocket server to the running HTTP server.
-- [ ] A complete production end-to-end connection and event-delivery flow.
-
-The ticket route's mount is visible in its route test, and WebSocket attachment is visible in test setup. These test references do not establish production bootstrap registration or attachment. Do not interpret these two items as verified merely because the individual components exist.
-
-### Known MVP limitations
-
-- Ticket storage is in memory and is not shared between backend instances.
-- WebSocket connection tracking is in memory and single-process.
-- Tickets and connection state are not persisted across backend restarts.
-- Event delivery is best-effort; there is no durable queue or replay.
-- Exactly-once delivery is not guaranteed.
-- There is no multi-instance pub/sub or horizontal connection distribution.
-- Clients must use REST history refresh to recover missed updates.
-- `compensated` and `compensation_failed` have no approved WebSocket event mapping in the current implementation.
-
-## A. Overview and scope
-
-**APPROVED DESIGN:** Add live notifications for workflow execution lifecycle
-updates. REST remains the source of truth for execution history, details, and
-the latest persisted state. WebSocket is an additional best-effort channel;
-clients recover current state through REST.
+## Follow-up verification after fetch — 1 November 2026
 
 ### Git references and reported commits
 

@@ -1,12 +1,23 @@
 # Week 3 — Retry Policy & Failure Persistence: audit and design proposal
 
 **Original audit:** Nithin C · `member/nithin` · 29 October 2026
-**Current-branch verification:** `member/mahak` at `4d273de` · 31 October 2026
+**Original current-branch verification:** `member/mahak` at `4d273de` · 31 October 2026
 
-**Status:** Retry execution remains **NOT IMPLEMENTED**. Decisions D1 (strip
-orchestration-only task fields before handler dispatch) and D3 (keep execution
-synchronous) are approved. D3 matches the current implementation; D1 is not yet
-implemented. No retry worker, queue, retry schema, or durable DLQ is present.
+**Status:** Retry execution remains **NOT IMPLEMENTED**. D1 (strip
+orchestration-only task fields before handler dispatch) is implemented on the
+3 November assigned branch; D3 (keep execution synchronous) remains current.
+No retry worker, queue, retry schema, or durable DLQ is present.
+
+### Current-branch update — 3 November 2026
+
+Rechecked at `member/mahak` `43e8b99`. `execution.runtime.ts` validates the
+retry configuration shape and removes `retry` and `timeoutMs` from the action
+handler payload. It does **not** execute retries, enforce an attempts ceiling,
+or schedule backoff. The test
+`keeps retry and timeoutMs out of task and compensation payloads` verifies D1;
+`does not retry a failed task when the node declares a retry policy` verifies
+that a declared retry policy still runs only once. The older D1 statements
+below describe the 31 October snapshot and are superseded by this update.
 
 ---
 
@@ -107,30 +118,30 @@ current-branch finding.
 retry?: { attempts: number; backoffMs: number };
 ```
 
-The execution runtime does not validate the `retry` shape or use its values.
-The graph contract is not runtime validation: malformed values (including
-non-object JSON values) are not rejected as retry-policy errors. The test
-fixtures use the documented shape, but passing validation does not mean retries
-are implemented.
+The current execution runtime validates the retry shape (`attempts` must be an
+integer of at least one; `backoffMs` must be finite and non-negative), but does
+not use these values to execute retries or delay dispatch. There is no maximum
+attempt cap, so oversized valid `attempts` values are accepted. Graph-contract
+documentation alone is not runtime validation; runtime shape validation still
+does not mean retries are implemented.
 
 Approved **D1** is to strip orchestration-only fields (`retry` and `timeoutMs`)
-before task-handler dispatch. That decision is **APPROVED, NOT IMPLEMENTED** on
-this branch. `parseTaskActionConfig()` currently removes only
-`compensationAction` and `compensationConfig`:
+before task-handler dispatch. This was **NOT IMPLEMENTED** at the 31 October
+snapshot; it is **IMPLEMENTED** at the 3 November assigned-branch snapshot.
+`parseTaskActionConfig()` removes `compensationAction`, `compensationConfig`,
+`retry` and `timeoutMs` before dispatch:
 
 ```ts
 const taskConfig = { ...config };
 delete taskConfig.compensationAction;
 delete taskConfig.compensationConfig;
+delete taskConfig.retry;
+delete taskConfig.timeoutMs;
 ```
 
-Thus `retry` and `timeoutMs` are both passed to `action.execute(input)` as
-ordinary fields today. A handler that forwards its input can send these
-orchestration fields downstream. No test currently verifies D1 stripping.
-
-The existing runtime test confirms action-specific fields are preserved, but
-does not separately assert stripping of orchestration fields. Implementing D1
-requires updating this dispatch contract and adding a focused test.
+The focused runtime test verifies these orchestration fields are not forwarded
+to task or compensation handlers. The separate retry-execution requirement
+remains unimplemented.
 
 ---
 
