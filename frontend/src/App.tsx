@@ -3,6 +3,7 @@ import { useState, useCallback } from 'react'
 import DashboardPage from './pages/DashboardPage'
 import WorkflowsPage from './pages/WorkflowsPage'
 import ExecutionsPage from './pages/ExecutionsPage'
+import AnalyticsPage from './pages/AnalyticsPage'
 import SettingsPage from './pages/SettingsPage'
 import Sidebar from './components/layout/Sidebar'
 import NodePreview from './components/workflow/nodes/NodePreview'
@@ -20,7 +21,6 @@ import {
   mapPersistedWorkflow,
   type Workflow,
 } from './workflowState'
-import { validateWorkflowGraph } from './graphValidation'
 import './App.css'
 
 type Page =
@@ -28,12 +28,14 @@ type Page =
   | 'Workflows'
   | 'Node Preview'
   | 'Executions'
+  | 'Analytics'
   | 'Settings'
 
 function App() {
   const [activePage, setActivePage] = useState<Page>('Dashboard')
   const [workflows, setWorkflows] = useState<Workflow[]>(initialWorkflows)
   const [createWorkflowRequested, setCreateWorkflowRequested] = useState(false)
+  const [pendingExecutionId, setPendingExecutionId] = useState<string | null>(null)
   const [workflowGraph, setWorkflowGraph] =
     useState<WorkflowGraph | null>(null)
   const [workflowId, setWorkflowId] = useState<string | null>(null)
@@ -73,6 +75,15 @@ function App() {
       }
       return currentId
     })
+  }, [])
+
+  const handleViewExecution = useCallback((executionId: string) => {
+    setPendingExecutionId(executionId)
+    setActivePage('Executions')
+  }, [])
+
+  const handleExecutionRequestHandled = useCallback(() => {
+    setPendingExecutionId(null)
   }, [])
 
   const handleActivateWorkflow = async () => {
@@ -245,18 +256,6 @@ function App() {
     ? workflows.find((w) => String(w.id) === String(workflowId))
     : null
 
-  const graphIssues = workflowGraph
-    ? validateWorkflowGraph(workflowGraph)
-    : []
-
-  const graphStatus = !workflowGraph
-    ? 'Waiting for graph'
-    : graphIssues.length === 0
-      ? 'Graph available'
-      : `Graph available — ${graphIssues.length} contract ${
-          graphIssues.length === 1 ? 'issue' : 'issues'
-        }`
-
   return (
     <div className="app-layout">
       <Sidebar
@@ -266,7 +265,11 @@ function App() {
         }}
       />
 
-      <main className="app">
+      <main
+        className={`app ${
+          activePage === 'Node Preview' ? 'app--workflow-studio' : ''
+        }`}
+      >
         {activePage === 'Dashboard' && (
           <DashboardPage
             workflows={workflows}
@@ -277,6 +280,7 @@ function App() {
               setActivePage('Workflows')
             }}
             onEditWorkflow={handleEditWorkflow}
+            onViewExecution={handleViewExecution}
           />
         )}
 
@@ -294,15 +298,8 @@ function App() {
 
         {activePage === 'Node Preview' && (
           <>
-            <h1>Node Preview</h1>
-            <p
-              role="status"
-              className="node-preview__status"
-            >
-              Graph status: {graphStatus}
-            </p>
-
             <NodePreview
+              key={workflowId ?? 'new-workflow'}
               workflowId={workflowId ?? undefined}
               workflowName={currentWorkflow?.name}
               workflowDescription={currentWorkflow?.description}
@@ -319,12 +316,24 @@ function App() {
               isStatusActionPending={isStatusActionPending}
               statusActionError={statusActionError}
               statusActionMessage={statusActionMessage}
+              onNavigate={(page) => setActivePage(page as Page)}
             />
           </>
         )}
 
         {activePage === 'Executions' && (
-          <ExecutionsPage tenantApiKey={tenantApiKey} />
+          <ExecutionsPage
+            tenantApiKey={tenantApiKey}
+            initialExecutionId={pendingExecutionId}
+            onInitialExecutionHandled={handleExecutionRequestHandled}
+          />
+        )}
+
+        {activePage === 'Analytics' && (
+          <AnalyticsPage
+            tenantApiKey={tenantApiKey}
+            onNavigate={(page) => setActivePage(page as Page)}
+          />
         )}
 
         {activePage === 'Settings' && (

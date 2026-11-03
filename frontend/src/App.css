@@ -184,7 +184,7 @@
 }
 .app {
   width: 100%;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 24px 20px;
   box-sizing: border-box;
@@ -220,5 +220,35 @@
 @media (max-width: 768px) {
   .app-layout {
     flex-direction: column;
+  }
+}
+
+.app-layout:has(.app--workflow-studio) {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app--workflow-studio {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .app-layout:has(.app--workflow-studio) {
+    flex-direction: column;
+  }
+
+  .app--workflow-studio {
+    width: 100%;
+    height: auto;
+    flex: 1 1 auto;
   }
 }

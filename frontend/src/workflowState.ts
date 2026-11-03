@@ -162,3 +162,19 @@ export function removeWorkflow(
 export function isRunButtonDisabled(canRun: boolean, isRunning: boolean) {
   return !canRun || isRunning;
 }
+
+export function generateCopyName(
+  baseName: string,
+  existingWorkflows: Workflow[],
+): string {
+  const existingNames = new Set(
+    existingWorkflows.map((w) => w.name.toLowerCase()),
+  );
+  let copyName = `${baseName} (Copy)`;
+  let counter = 2;
+  while (existingNames.has(copyName.toLowerCase())) {
+    copyName = `${baseName} (Copy ${counter})`;
+    counter++;
+  }
+  return copyName;
+}

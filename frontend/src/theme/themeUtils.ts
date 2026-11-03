@@ -8,15 +8,8 @@ export function getInitialTheme(): Theme {
     if (stored === 'light' || stored === 'dark') {
       return stored
     }
-    if (
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-color-scheme: dark)').matches
-    ) {
-      return 'dark'
-    }
   } catch {
     // Gracefully handle environments without localStorage or window access
   }
-  return 'dark'
+  return 'light'
 }
-
