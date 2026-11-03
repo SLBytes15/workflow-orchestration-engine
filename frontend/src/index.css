@@ -1,17 +1,17 @@
 :root {
   --text: #64748b;
-  --text-h: #0f172a;
-  --bg: #ffffff;
+  --text-h: #172033;
+  --bg: #f7f8fa;
   --surface: #ffffff;
-  --surface-secondary: #f8fafc;
+  --surface-secondary: #f1f3f7;
   --border: #e2e8f0;
   --border-color: #e2e8f0;
-  --text-primary: #0f172a;
+  --text-primary: #172033;
   --text-secondary: #64748b;
   --code-bg: #f1f5f9;
-  --accent: #7c3aed;
-  --accent-bg: rgba(124, 58, 237, 0.08);
-  --accent-border: rgba(124, 58, 237, 0.35);
+  --accent: #6d28d9;
+  --accent-bg: #f5f3ff;
+  --accent-border: #ddd6fe;
   --social-bg: rgba(241, 245, 249, 0.6);
   --shadow:
     rgba(0, 0, 0, 0.06) 0 4px 6px -1px, rgba(0, 0, 0, 0.04) 0 2px 4px -1px;
@@ -32,28 +32,6 @@
 
   @media (max-width: 1024px) {
     font-size: 15px;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --text: #94a3b8;
-    --text-h: #f8fafc;
-    --bg: #12141c;
-    --surface: #1a1c26;
-    --surface-secondary: #161822;
-    --border: #282b37;
-    --border-color: #282b37;
-    --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
-    --code-bg: #1a1c26;
-    --accent: #a855f7;
-    --accent-bg: rgba(168, 85, 247, 0.12);
-    --accent-border: rgba(168, 85, 247, 0.4);
-    --social-bg: rgba(40, 43, 55, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-    color-scheme: dark;
   }
 }
 
@@ -79,18 +57,18 @@
 
 :root[data-theme="light"] {
   --text: #64748b;
-  --text-h: #0f172a;
-  --bg: #ffffff;
+  --text-h: #172033;
+  --bg: #f7f8fa;
   --surface: #ffffff;
-  --surface-secondary: #f8fafc;
+  --surface-secondary: #f1f3f7;
   --border: #e2e8f0;
   --border-color: #e2e8f0;
-  --text-primary: #0f172a;
+  --text-primary: #172033;
   --text-secondary: #64748b;
   --code-bg: #f1f5f9;
-  --accent: #7c3aed;
-  --accent-bg: rgba(124, 58, 237, 0.08);
-  --accent-border: rgba(124, 58, 237, 0.35);
+  --accent: #6d28d9;
+  --accent-bg: #f5f3ff;
+  --accent-border: #ddd6fe;
   --social-bg: rgba(241, 245, 249, 0.6);
   --shadow:
     rgba(0, 0, 0, 0.06) 0 4px 6px -1px, rgba(0, 0, 0, 0.04) 0 2px 4px -1px;

@@ -45,12 +45,31 @@ describe("ExecutionsPage component initialization and render regression", () => 
       "Rendered HTML must contain realtime connection indicator",
     );
     assert.ok(
-      html.includes("Execution ID") && html.includes("Search 24-character ID"),
-      "Rendered HTML must contain search execution ID input and label",
+      html.includes("executions-page__breadcrumb"),
+      "Rendered HTML must contain breadcrumb container",
     );
     assert.ok(
-      html.includes("executions-page__filters"),
-      "Rendered HTML must contain execution filters container",
+      html.includes("Observability") && html.includes("Execution History"),
+      "Rendered HTML must contain Observability / Execution History breadcrumb text",
+    );
+    assert.ok(
+      html.includes("executions-page__stats"),
+      "Rendered HTML must contain summary stats grid",
+    );
+    assert.ok(
+      html.includes("Total Executions") &&
+        html.includes("Completed") &&
+        html.includes("Failed") &&
+        html.includes("Currently Running"),
+      "Rendered HTML must contain 4 summary metrics cards",
+    );
+    assert.ok(
+      html.includes("executions-skeleton-table") || html.includes("executions-table"),
+      "Rendered HTML must contain executions skeleton table or execution table structure",
+    );
+    assert.ok(
+      html.includes("Loading execution history...") || html.includes("Execution Records"),
+      "Rendered HTML must contain loading indicator or execution records heading",
     );
   });
 

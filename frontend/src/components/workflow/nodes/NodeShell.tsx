@@ -13,9 +13,9 @@ interface NodeShellProps {
 }
 
 const NODE_KIND_ICON: Record<WorkflowNodeType, string> = {
-  trigger: "⚡",
-  task: "⚙",
-  condition: "◆",
+  trigger: "⏵",
+  task: "▣",
+  condition: "◇",
 };
 
 function NodeShell({ kind, label, selected = false }: NodeShellProps) {

@@ -1,4 +1,4 @@
-﻿import express from "express";
+import express from "express";
 import cors from "cors";
 import { apiRateLimiter } from "./middleware/rateLimit.middleware";
 import { errorHandler } from "./middleware/errorHandler.middleware";

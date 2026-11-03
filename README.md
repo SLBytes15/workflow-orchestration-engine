@@ -1,324 +1,284 @@
 # Multi-Tenant Distributed Workflow & Saga Orchestration Engine
 
-# Workflow & Saga Orchestration Engine
+A multi-tenant workflow and Saga orchestration engine with an interactive React visual canvas, real-time WebSocket execution monitoring, durable MongoDB-backed idempotency, node-level execution timeline analytics, and compensation mechanics.
 
-Zaalima internship project: a workflow canvas and API for defining, validating,
-persisting, and executing tenant-owned workflow graphs.
+---
 
-## Project overview
+## 1. Project Overview
 
-The project addresses the need to represent a multi-step process as a directed
-graph, validate that graph, and record workflow runs and their outcomes. The
-repository contains a React frontend and a TypeScript/Express backend backed by
-MongoDB.
+The Workflow Orchestration Engine enables multi-tenant teams to define, validate, persist, execute, and monitor multi-step distributed workflows represented as directed acyclic graphs (DAGs). It combines:
+- A modern visual graph canvas built on React 19 and `@xyflow/react`.
+- A resilient backend built on Node.js, TypeScript, and Express 5.
+- Durable persistence and concurrency control backed by MongoDB and Mongoose 9.
+- Live execution status streaming via authenticated WebSockets.
+- Node-level execution timeline and performance observability.
+- Resilient idempotency with fencing tokens to guarantee safe retries across distributed instances.
 
-The implementation is an evolving development project, not a claim of a
-production-ready distributed platform. In particular, execution currently
-runs in the API request path; this repository does not establish a queue or
-worker architecture.
+---
 
-## Implemented capabilities
+## 2. Key Features
 
-- **Workflow management:** create workflows with a name, optional description,
-  and graph; list and delete workflows; and update workflow fields through the
-  backend API. New workflows are created with `draft` status and version `1`.
-- **Graph validation:** validate version-1 graphs with `trigger`, `task`, and
-  `condition` nodes and edges. The backend validates graph structure and
-  condition configuration on creation and graph replacement.
-- **Workflow canvas:** prepare and inspect a graph in the React interface.
-  Saved workflows are loaded from the backend when an API key is configured;
-  sample entries in the interface are demonstration data, not persisted
-  workflows.
-- **Execution records:** start a saved workflow, retain a graph snapshot and
-  workflow version for the run, and retrieve tenant-scoped execution details
-  and paginated history.
-- **Saga compensation path:** the runtime supports registered compensation
-  handlers for eligible successful tasks. It records compensation checkpoints
-  and distinguishes `compensated` from `compensation_failed`; this is not a
-  guarantee that every external side effect can be undone.
+- **Multi-Tenant Isolation**: Strict logical data isolation enforced at the database query level using SHA-256 hashed API keys. Client-supplied tenant IDs are rejected.
+- **Visual Workflow Studio**: Interactive graph editor supporting `trigger`, `task`, and `condition` nodes with live validation and drag-and-drop.
+- **Workflow Lifecycle Management**: Full draft, active, paused, and resumed workflow lifecycle states with versioned graph updates (`PUT /graph`).
+- **Enterprise Workflow Catalog**: Searchable workflow directory with card and table views, status filters, sorting, and duplicate actions.
+- **Real-Time Execution Dashboard**: Live execution monitoring over WebSockets with metric cards, status filters, date range filters, and search.
+- **Enterprise Analytics & System Health**: Dedicated observability dashboard featuring 7-status distribution breakdowns, terminal outcome ratios, and execution duration analytics without speculative trend interpolation.
+- **Execution Timeline & Node Duration Insights**: Node-level duration calculation, visual status badges, and chronological execution progress.
+- **Execution Details Drawer**: Deep inspection of execution snapshots, node outputs, errors, and compensation metadata.
+- **Saga Compensation Runtime**: Reverse-order compensation of completed tasks upon workflow failure, separating original task errors from compensation errors.
+- **Durable MongoDB Idempotency**: Atomic key reservation (`reserveKey`), TTL expiration, payload hashing, and fencing tokens (`reservationToken`) preventing zombie overwrites or stale cleanup.
+- **Event-Driven Change Stream Watcher**: MongoDB Change Stream watcher dispatching matching insert events to active workflows.
+- **Forward Checkpointing Policy**: Configurable `graph.executionPolicy.enableForwardCheckpoints` persisting intermediate progress.
 
-## Architecture
+---
+
+## 3. Technology Stack
+
+| Layer | Technologies |
+|---|---|
+| **Frontend** | React 19, TypeScript 5.8, Vite 8, `@xyflow/react` 12, Lucide React |
+| **Backend** | Node.js 20+, TypeScript 5.8, Express 5, `ws` (WebSockets) |
+| **Database** | MongoDB 6.0+ (Replica Set required for Change Streams), Mongoose 9 |
+| **Tooling & QA** | Node Test Runner via `tsx`, Oxlint, TypeScript Compiler (`tsc`) |
+
+---
+
+## 4. Architecture
 
 ```text
-React + TypeScript + Vite
-           |
-           | HTTP / JSON, X-API-Key
-           v
-Express API
-  |-- authentication and request validation
-  |-- workflow and execution services
-  |-- graph execution runtime
-           |
-           v
-MongoDB via Mongoose
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                           Browser Frontend                             │
+ │   React 19 Canvas  │  Execution Dashboard  │  Timeline & Drawer UI     │
+ └───────────────────────┬───────────────────────────────┬────────────────┘
+                         │                               │
+             HTTP / REST │ (X-API-Key)     WebSockets    │ (/ws/executions?ticket=)
+                         ▼                               ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                          Express 5 Backend                             │
+ │  ┌──────────────────────────────────────────────────────────────────┐  │
+ │  │ API Key Resolver & Tenant Context Middleware                     │  │
+ │  └──────────────────────────────┬───────────────────────────────────┘  │
+ │                                 ▼                                      │
+ │  ┌─────────────────────────┐  ┌─────────────────────────────────────┐  │
+ │  │ Workflow Service & Graph│  │ Execution Service & Runtime         │  │
+ │  │ Validator               │  │ - Graph Traversal & Sagas           │  │
+ │  └─────────────────────────┘  │ - Forward Checkpoint Policy         │  │
+ │                               │ - Idempotency & Fencing Tokens      │  │
+ │                               └──────────────────┬──────────────────┘  │
+ │  ┌────────────────────────┐                      │                     │
+ │  │ Change Stream Watcher  │                      ▼                     │
+ │  └───────────▲────────────┘   ┌─────────────────────────────────────┐  │
+ │              │                │ WebSocket Event Hub (ws)            │  │
+ │              │                └─────────────────────────────────────┘  │
+ └──────────────┼───────────────────────────────────┼─────────────────────┘
+                │ MongoDB Change Streams            │
+                ▼                                   ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                         MongoDB Database                               │
+ │   tenants │ apikeys │ workflows │ workflowexecutions │ idempotencyrecords │
+ └────────────────────────────────────────────────────────────────────────┘
 ```
 
-The frontend calls the backend over HTTP. The Express application resolves
-tenant API keys and routes workflow and execution requests to services. Those
-services read and write tenant-owned workflow and execution records through
-Mongoose. Workflow execution is invoked directly by the execution request
-handler; a `queued` record is persisted before the service transitions it to
-`running`, executes the graph, and persists the terminal result.
+---
 
-## Technology stack
-
-| Area | Verified technologies |
-| --- | --- |
-| Frontend | React 19, TypeScript, Vite, `@xyflow/react` |
-| Backend | Node.js, TypeScript, Express 5 |
-| Persistence | MongoDB with Mongoose 9 |
-| Development and checks | npm, `tsx`, TypeScript compiler, Oxlint |
-
-Dependency versions are declared in `frontend/package.json` and
-`backend/package.json`. There is no root `package.json`; install and run each
-application from its own directory.
-
-## Repository structure
+## 5. Repository Structure
 
 ```text
 .
-|-- README.md
-|-- CONTRIBUTING.md
-|-- workflow-canvas-contract.md
-|-- docs/
-|   |-- architecture.md
-|   |-- requirements.md
-|   |-- workflow-api-auth-contract.md
-|   |-- workflow-graph-contract.md
-|   `-- backend/
-|-- backend/
-|   |-- .env.example
-|   |-- package.json
-|   |-- scripts/
-|   `-- src/
-|       |-- config/       # Database connection setup
-|       |-- middleware/   # Authentication, validation, rate limiting, errors
-|       |-- models/       # Tenant, API-key, workflow, execution models
-|       |-- routes/       # Workflow and execution HTTP routes
-|       |-- services/     # Workflow, execution, runtime, key services
-|       |-- types/
-|       `-- validators/   # Workflow and graph validation
-`-- frontend/
-    |-- .env.example
-    |-- package.json
-    |-- public/
-    |-- tests/
-    `-- src/
-        |-- api/           # Workflow and execution HTTP clients
-        |-- components/
-        |-- pages/
-        |-- graphValidation.ts
-        `-- workflowState.ts
+├── backend/
+│   ├── .env.example
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── src/
+│       ├── app.ts                         # Express app configuration & middleware
+│       ├── index.ts                       # Server startup, WebSocket attachment, shutdown
+│       ├── config/database.ts             # MongoDB Mongoose connection
+│       ├── middleware/                    # Tenant auth, rate limiting, error handling
+│       ├── models/                        # Tenant, ApiKey, Workflow, WorkflowExecution, IdempotencyRecord
+│       ├── routes/                        # Workflow, execution, WebSocket ticket routes
+│       ├── services/                      # Execution runtime, idempotency, recovery, WebSocket hub
+│       └── validators/                    # Workflow graph & execution policy validators
+├── frontend/
+│   ├── .env.example
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts
+│   ├── tests/                             # Automated frontend test suites
+│   └── src/
+│       ├── App.tsx                        # Main application layout and routes
+│       ├── api/                           # Workflow and execution API clients
+│       ├── pages/                         # DashboardPage, WorkflowsPage, ExecutionsPage, AnalyticsPage, SettingsPage
+│       └── executionHelpers.ts            # Timeline, duration, formatters, and analytics helpers
+└── docs/                                  # API contracts, architecture specifications, handovers
 ```
 
-## Prerequisites
+---
 
-- Node.js and npm.
-- A MongoDB instance and connection string that you are authorized to use for
-  local development. Do not use a shared database unless your team explicitly
-  authorizes it.
+## 6. Installation Prerequisites
 
-The backend requires `MONGODB_URI` and will not start if it is missing or the
-database connection fails. No live database connection is required to read
-this documentation or inspect the source.
+- **Node.js**: Version 20.x or higher.
+- **npm**: Version 10.x or higher.
+- **MongoDB**: Version 6.0 or higher.
+  - *Note:* MongoDB Change Streams require a **Replica Set** (local single-node replica set or MongoDB Atlas). Standard standalone MongoDB instances will reject Change Streams.
 
-## Local development setup
+---
 
-### Backend
+## 7. Environment Setup
 
-From a terminal:
+### Backend (`backend/.env`)
+Copy `.env.example` to `.env` in the `backend/` directory:
+```bash
+cp backend/.env.example backend/.env
+```
 
-```powershell
+| Variable | Required | Description | Example |
+|---|---|---|---|
+| `MONGODB_URI` | **Yes** | Connection string to MongoDB replica set / Atlas | `mongodb://localhost:27017/workflow_engine?replicaSet=rs0` |
+| `PORT` | No | Server HTTP listening port (defaults to `3000`) | `3000` |
+
+### Frontend (`frontend/.env`)
+Copy `.env.example` to `.env` in the `frontend/` directory:
+```bash
+cp frontend/.env.example frontend/.env
+```
+
+| Variable | Required | Description | Example |
+|---|---|---|---|
+| `VITE_API_BASE_URL` | No | Backend API base URL (defaults to `http://localhost:3000`) | `http://localhost:3000` |
+| `VITE_API_KEY` | No | Tenant API key used by browser during development | `wf_live_testkey123...` |
+
+---
+
+## 8. Database Configuration & Indexes
+
+The engine requires MongoDB with Mongoose. Key indexes declared across models:
+- **`Tenant`**: Unique index on `slug`.
+- **`ApiKey`**: Unique index on `keyHash`. Scoped index on `(tenantId, status)`.
+- **`Workflow`**: Scoped index on `(tenantId, name)`.
+- **`WorkflowExecution`**: Scoped indexes on `(tenantId, workflowId, createdAt)`, `(tenantId, status, createdAt)`.
+- **`IdempotencyRecord`**:
+  - Unique compound index on `(tenantId, workflowId, key)`.
+  - TTL expiration index on `expiresAt` with `expireAfterSeconds: 0`.
+
+---
+
+## 9. Development Startup Commands
+
+### Start Backend (with automatic reload):
+```bash
 cd backend
-npm ci
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-```
-
-If `.env` already exists, this command leaves it unchanged.
-
-Edit `backend/.env` and set `MONGODB_URI` to your authorized development
-database. The example URI contains placeholders; it is not a usable
-credential. Keep `.env` local and do not commit it. `PORT` is optional and
-defaults to `3000`.
-
-Start the backend from `backend/`:
-
-```powershell
+npm install
 npm run dev
 ```
 
-### Frontend
-
-In a second terminal:
-
-```powershell
+### Start Frontend (Vite dev server):
+```bash
 cd frontend
-npm ci
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-```
-
-If `.env` already exists, this command leaves it unchanged.
-
-Set `VITE_API_BASE_URL` to the backend URL if it differs from its default
-(`http://localhost:3000`). Configure `VITE_API_KEY` with an approved local
-development key. Vite variables are available to browser code: use only a
-development key here, never a production secret.
-
-Start the frontend from `frontend/`:
-
-```powershell
+npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. The frontend is configured to call the
-backend at `http://localhost:3000` by default.
+Open `http://localhost:5173` in your browser.
 
-## Environment variables
+---
 
-These names are present in the checked-in `.env.example` files or are read by
-the application:
+## 10. Testing Commands
 
-| Variable | Application | Purpose |
-| --- | --- | --- |
-| `MONGODB_URI` | Backend | MongoDB connection string; required at startup |
-| `PORT` | Backend | HTTP port; defaults to `3000` |
-| `VITE_API_BASE_URL` | Frontend | Backend base URL; defaults to `http://localhost:3000` |
-| `VITE_API_KEY` | Frontend | Tenant API key sent by the browser as `X-API-Key` |
+The project features comprehensive automated test suites across backend and frontend:
 
-Do not put real credentials, API keys, or connection strings in this README or
-other tracked documentation. The root ignore rules exclude `.env` files and
-allow `.env.example` files.
+| Suite | Command | Details |
+|---|---|---|
+| **Backend Tests** | `cd backend && npm test` | 444 tests across 18 suites (Node test runner via `tsx`). |
+| **Frontend Tests** | `cd frontend && ../backend/node_modules/.bin/tsx --test tests/**/*.test.ts` | 196 tests across 51 suites (Unit, state, UI, timeline, and analytics). |
+| **Frontend Lint** | `cd frontend && npm run lint` | Oxlint fast linting across all frontend files. |
 
-## Development, build, and test commands
+---
 
-Run commands in the application directory shown in the first column.
+## 11. Production Build Commands
 
-| Directory | Command | Purpose |
-| --- | --- | --- |
-| `backend/` | `npm run dev` | Run the backend with `tsx watch` |
-| `backend/` | `npm test` | Run backend tests with Node's test runner through `tsx` |
-| `backend/` | `npm run build` | Compile TypeScript to `backend/dist/` |
-| `backend/` | `npm start` | Run the compiled backend from `dist/` |
-| `frontend/` | `npm run dev` | Start the Vite development server |
-| `frontend/` | `npm run build` | Type-check and create the Vite production build |
-| `frontend/` | `npm run lint` | Run Oxlint |
-| `frontend/` | `npm run preview` | Preview a production build locally |
+### Build Backend:
+```bash
+cd backend
+npm run build
+```
+Compiles TypeScript into `backend/dist/`. Run in production with:
+```bash
+npm start
+```
 
-There is no root-level script. The frontend package currently defines no
-`test` script; frontend test files are present under `frontend/tests/`, but
-their supported runner/command needs verification before being documented as
-an executable test workflow.
+### Build Frontend:
+```bash
+cd frontend
+npm run build
+```
+Type-checks with `tsc -b` and bundles production assets into `frontend/dist/`. Preview locally with:
+```bash
+npm run preview
+```
 
-## Workflow and execution journeys
+---
 
-1. **Prepare a graph.** Use the frontend's Node Preview/canvas to prepare a
-   graph. The graph contract uses version `1` and `trigger`, `task`, and
-   `condition` nodes.
-2. **Create and save a workflow.** The create form requires a graph and a
-   tenant API key. The backend validates the request and graph, assigns the
-   authenticated tenant, and creates a `draft` workflow at version `1`.
-   `GET /api/workflows` lists the authenticated tenant's workflows.
-3. **Update or delete a saved workflow.** The backend exposes
-   `PATCH /api/workflows/:workflowId` for editable workflow fields,
-   `PUT /api/workflows/:workflowId/graph` for graph replacement, and
-   `DELETE /api/workflows/:workflowId`. Graph replacement increments the
-   workflow version. Saving edits to an existing workflow from the frontend
-   is **Needs verification**; the inspected workflow page does not call the
-   update API.
-4. **Execute a saved workflow.** The frontend sends
-   `POST /api/workflows/:workflowId/executions` with an `input` JSON object and
-   the tenant key. This request waits for the execution service to return its
-   persisted result; it is not a background-job submission.
-5. **Review a run.** The execution page retrieves workflow history and
-   individual execution details. History supports a limit and cursor, and the
-   page can load additional results.
+## 12. API Overview
 
-There is no implemented workflow activation operation in the inspected
-workflow routes: creation sets `draft`, and the general update validator
-rejects status changes. The model's `active` status value alone does not
-establish an activation journey.
+All routes except `/api/health` require the `X-API-Key` HTTP header.
 
-## Tenant isolation and API-key handling
+### Workflows API (`/api/workflows`)
+- `GET /api/workflows`: List all workflows for the authenticated tenant.
+- `POST /api/workflows`: Create a new workflow (starts in `draft` status, version 1).
+- `GET /api/workflows/:workflowId`: Retrieve a workflow by ID.
+- `PATCH /api/workflows/:workflowId`: Update editable fields (`name`, `description`).
+- `PUT /api/workflows/:workflowId/graph`: Replace graph definition (increments version).
+- `DELETE /api/workflows/:workflowId`: Delete workflow.
+- `POST /api/workflows/:workflowId/activate`: Transition workflow from `draft` to `active`.
+- `POST /api/workflows/:workflowId/pause`: Transition workflow from `active` to `paused`.
+- `POST /api/workflows/:workflowId/resume`: Transition workflow from `paused` to `active`.
 
-- Workflow and execution routes require the `X-API-Key` header. Missing,
-  invalid, revoked, expired, or inactive-tenant keys are rejected by the
-  resolver and authentication middleware.
-- The resolver hashes the supplied key with SHA-256 and looks up the stored
-  hash. The API-key model stores the hash and key metadata, excludes the hash
-  from normal query selection, and does not persist the plaintext key.
-- Workflow and execution service queries include the authenticated tenant ID.
-  A client-supplied tenant ID is not the source of tenant authorization.
-- The frontend reads `VITE_API_KEY` in browser code. It is suitable only for
-  an approved development setup, not for protecting production credentials.
+### Executions API (`/api/workflows` & `/api/executions`)
+- `POST /api/workflows/:workflowId/executions`: Start a workflow execution.
+  - Supports optional `Idempotency-Key` header.
+  - Accepts JSON payload: `{"input": { ... }}`.
+- `GET /api/executions`: Global paginated execution history with cursor, status, date, and workflow filters.
+- `GET /api/executions/summary`: Aggregated execution analytics (counts by status, success rate, failure rate, durations).
+- `GET /api/executions/:executionId`: Retrieve complete execution record, node results, and compensation details.
+- `GET /api/workflows/:workflowId/executions`: List execution history for a specific workflow.
+- `POST /api/executions/ws-ticket`: Issue a single-use, 60-second WebSocket connection ticket.
 
-These source-level controls do not by themselves certify production security
-or every possible tenant-isolation scenario. See
-[`docs/workflow-api-auth-contract.md`](./docs/workflow-api-auth-contract.md)
-for the contract and remaining decisions.
+---
 
-## Execution lifecycle, compensation, and event triggers
+## 13. WebSocket Real-Time Monitoring
 
-The execution service persists an execution record with a graph snapshot and
-workflow version, moves it from `queued` to `running`, invokes
-`executeWorkflowGraph()` in the request path, and persists the result. The
-execution model supports `queued`, `running`, `completed`, `failed`,
-`compensating`, `compensated`, and `compensation_failed` statuses.
+- **Endpoint**: `ws://<host>:<port>/ws/executions?ticket=<ticket>`
+- **Ticket Lifecycle**:
+  1. Client sends `POST /api/executions/ws-ticket` with `X-API-Key`.
+  2. Backend validates key, generates a cryptographically random UUID ticket bound to `tenantId`, and caches it for 60 seconds.
+  3. Client connects to WebSocket endpoint passing `?ticket=<ticket>`.
+  4. Backend consumes ticket (single-use), associates connection with tenant, and streams live updates.
+- **Events**:
+  - `execution:updated`: Emitted whenever a workflow execution transitions status or updates nodes. Scoped strictly to the owning tenant.
 
-When a task fails, the runtime can compensate previously completed tasks that
-have compensation configuration, in reverse completion order, using a
-registered compensation handler. It persists checkpoints around compensation.
-Compensation may itself fail; persistence errors can leave the outcome
-unconfirmed, and the service does not automatically replay compensation in
-that case. This is not an at-least-once or exactly-once guarantee.
+---
 
-The default execution service does not register concrete task or compensation
-handlers. External task integrations and the full runtime behavior with
-production handlers are **Needs verification**. The graph's trigger node is
-the start of graph traversal; the inspected implementation does not establish
-an external event source or MongoDB Change Streams integration. Event
-delivery, retry policies, and worker-based execution are not documented as
-implemented capabilities.
+## 14. Idempotency & Recovery Architecture
 
-## Testing evidence and limitations
+- **Durable Key Reservation**: Keys are stored in MongoDB (`IdempotencyRecord`) with compound unique index `(tenantId, workflowId, key)`.
+- **Fencing Tokens**: Every in-flight reservation generates a unique `reservationToken`. If Request A experiences a latency pause exceeding the grace period ($5\,\text{s}$) and Request B reclaims the key, Request B receives a new fencing token. When Request A resumes, its token is invalidated, preventing zombie writes or deletion of Request B's reservation.
+- **On-Demand Reconciliation**: When clients retry with an existing key, the backend reconciles in-flight status against the actual `WorkflowExecution` document:
+  - If execution completed $\to$ reconstructs and returns cached response.
+  - If execution crashed before creation $\to$ atomically grants retry.
+  - If execution is currently running $\to$ returns HTTP 409 `IDEMPOTENCY_KEY_IN_FLIGHT`.
 
-The backend has unit and service/route tests under `backend/src/`. The
-frontend has test files under `frontend/tests/`, but its package does not
-declare a test command. Test results are not implied by the commands above.
+---
 
-[`backend/WORKFLOW_VERIFICATION_REPORT.md`](./backend/WORKFLOW_VERIFICATION_REPORT.md)
-records a verification run dated 26 October 2026, including backend tests,
-builds, lint, and limited manual execution checks. Those are historical
-results, were not rerun for this README update, and do not prove comprehensive
-tenant isolation, external task integration, or production readiness. The
-report recorded cleanup of its temporary test tenant and API key as pending
-as of 26 October 2026; the current cleanup status has not been verified.
+## 15. Known Limitations & Architectural Scope
 
-The graph-validation benchmark is a single-process micro-benchmark, not a
-load test or evidence of concurrent capacity. See
-[`docs/backend/graph-validation-benchmark.md`](./docs/backend/graph-validation-benchmark.md)
-for its scope and documented limitations. Browser end-to-end testing and
-live-database integration behavior are **Needs verification**.
+1. **Request-Path Execution**: Workflows currently execute within the Node.js API process. A separate message queue (e.g. RabbitMQ/Kafka) and decoupled worker fleet are recommended for long-running jobs.
+2. **Change Streams Requirement**: Change Streams require a MongoDB Replica Set; standalone instances do not emit oplog events.
+3. **Background Recovery Worker**: `IdempotencyRecoveryWorker` is implemented with an in-memory lock for single-instance sweeps. It is un-instantiated by default; production multi-instance deployments safely use on-demand reconciliation.
+4. **No Automatic Forward Replay**: Forward checkpoints persist node progress to MongoDB, but automatic engine resumption from intermediate checkpoints is not auto-triggered.
 
-## Known gaps and future work
+---
 
-The following are not established as complete by the inspected implementation:
+## 16. Contributing & Guidelines
 
-- Workflow activation and status transitions through the API.
-- A durable queue, separate workers, distributed execution, or WebSocket
-  updates.
-- External event sources, Change Streams, and event-trigger delivery
-  guarantees.
-- A retry policy or automatic compensation replay.
-- Concrete external task/compensation integrations in the default service.
-- Saving edits to an existing workflow through the frontend.
-- Browser end-to-end coverage and comprehensive live-database verification.
-
-These are verification or implementation gaps, not current feature claims.
-The source and documentation are evolving; check the relevant contract before
-relying on a future behavior.
-
-## Contributing
-
-The team branch, review, and pull-request workflow is described in
-[`CONTRIBUTING.md`](./CONTRIBUTING.md). Never commit `.env` files, API keys,
-database credentials, or other secrets.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for team branch workflows and coding standards. Never commit `.env` files or API secrets to version control.

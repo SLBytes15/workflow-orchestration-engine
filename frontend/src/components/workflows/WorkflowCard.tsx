@@ -22,6 +22,8 @@ type WorkflowCardProps = {
   isPausing?: boolean;
   onResume?: () => void;
   isResuming?: boolean;
+  onDuplicate?: () => void;
+  isDuplicating?: boolean;
 };
 function WorkflowCard({
   name,
@@ -42,6 +44,8 @@ function WorkflowCard({
   isPausing = false,
   onResume,
   isResuming = false,
+  onDuplicate,
+  isDuplicating = false,
 }: WorkflowCardProps) {
   return (
     <article className="workflow-card">
@@ -76,7 +80,7 @@ function WorkflowCard({
         </div>
       </div>
 
-      {(onEdit || onActivate || onPause || onResume || onRun || onDelete) && (
+      {(onEdit || onActivate || onPause || onResume || onRun || onDuplicate || onDelete) && (
         <div className="workflow-card__actions">
           {onEdit && (
             <button
@@ -86,6 +90,18 @@ function WorkflowCard({
               aria-label={`Edit workflow: ${name}`}
             >
               Edit workflow
+            </button>
+          )}
+
+          {onDuplicate && (
+            <button
+              type="button"
+              className="workflow-card__btn workflow-card__duplicate"
+              onClick={onDuplicate}
+              disabled={isDuplicating}
+              aria-label={`Duplicate workflow: ${name}`}
+            >
+              {isDuplicating ? 'Duplicating...' : 'Duplicate'}
             </button>
           )}
 
