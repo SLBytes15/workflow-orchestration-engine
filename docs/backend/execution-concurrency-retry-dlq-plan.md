@@ -7,6 +7,8 @@
 
 This document answers the three parts of the 4 November task: verify the execution architecture against the 1,000+ concurrent pipeline requirement, define the minimum viable retry/DLQ path, and prepare safe concurrency testing.
 
+> **Updated 5 November 2026:** written against `ff29741`. Four statements here no longer hold on `origin/main` at `4c6199b` — idempotency keys now exist, recovery analysis exists but is unwired, and duplicate requests are only duplicated when the `Idempotency-Key` header is absent. See `docs/verification/2026-11-05-nithin.md` §2 before quoting §1.6 or §2.4.
+
 Every line reference was checked against the current source on `member/nithin`, not carried over from earlier reports. Labels used: **VERIFIED**, **PARTIAL**, **NOT IMPLEMENTED**, **BLOCKED**.
 
 ---
