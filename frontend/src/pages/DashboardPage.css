@@ -956,3 +956,70 @@
     transition: none;
   }
 }
+
+/* DARK THEME OVERRIDES - SWATHI */
+:root[data-theme="dark"] .dashboard-page {
+  --text: #cbd5e1;
+  --text-h: #f8fafc;
+  --text-secondary: #94a3b8;
+  --border: #282b37;
+  --surface-secondary: #161822;
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .dashboard-page__subtitle,
+:root[data-theme="dark"] .dashboard-section__heading p,
+:root[data-theme="dark"] .dashboard-panel__heading p,
+:root[data-theme="dark"] .dashboard-kpi__label,
+:root[data-theme="dark"] .dashboard-state,
+:root[data-theme="dark"] .dashboard-failure-item__date {
+  color: #94a3b8 !important;
+}
+
+:root[data-theme="dark"] .dashboard-panel__heading h3 {
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .dashboard-kpi__detail,
+:root[data-theme="dark"] .dashboard-table th,
+:root[data-theme="dark"] .dashboard-table__id,
+:root[data-theme="dark"] .dashboard-failure-item__main span {
+  color: #cbd5e1 !important;
+}
+
+:root[data-theme="dark"] .dashboard-unavailable,
+:root[data-theme="dark"] .dashboard-inline-message,
+:root[data-theme="dark"] .dashboard-quick-actions__links {
+  background: var(--surface);
+  border-color: var(--border);
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .dashboard-inline-message--error {
+  background: rgba(220, 38, 38, 0.12);
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #fca5a5;
+}
+
+:root[data-theme="dark"] .dashboard-retry {
+  background: var(--surface-secondary);
+  border-color: var(--border);
+  color: #c4b5fd;
+}
+
+:root[data-theme="dark"] .dashboard-retry:hover {
+  background: var(--accent-bg);
+}
+
+:root[data-theme="dark"] .dashboard-retry:focus-visible {
+  outline-color: var(--accent);
+}
+
+:root[data-theme="dark"] .dashboard-failure-item__main,
+:root[data-theme="dark"] .dashboard-failure-item__main strong {
+  color: #fca5a5;
+}
+
+:root[data-theme="dark"] .dashboard-status-row {
+  color: #cbd5e1;
+}

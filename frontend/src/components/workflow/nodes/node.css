@@ -1755,3 +1755,67 @@
     transition: none;
   }
 }
+
+/* DARK THEME OVERRIDES - SWATHI */
+:root[data-theme="dark"] .workflow-studio {
+  color: #cbd5e1;
+  background: #12141c;
+}
+
+:root[data-theme="dark"] .workflow-studio [class*="toolbar"],
+:root[data-theme="dark"] .workflow-studio [class*="floating"],
+:root[data-theme="dark"] .workflow-studio [class*="panel"],
+:root[data-theme="dark"] .workflow-studio [class*="inspector"],
+:root[data-theme="dark"] .workflow-studio [class*="minimap"],
+:root[data-theme="dark"] .workflow-studio [class*="controls"] {
+  color: #cbd5e1;
+  background-color: #1a1c26;
+  border-color: #282b37;
+}
+
+:root[data-theme="dark"] .workflow-studio [class*="breadcrumb"],
+:root[data-theme="dark"] .workflow-studio [class*="label"],
+:root[data-theme="dark"] .workflow-studio [class*="description"] {
+  color: #94a3b8;
+}
+
+:root[data-theme="dark"] .workflow-studio input,
+:root[data-theme="dark"] .workflow-studio textarea,
+:root[data-theme="dark"] .workflow-studio select {
+  color: #f8fafc;
+  background-color: #161822;
+  border-color: #3b4050;
+}
+
+:root[data-theme="dark"] .workflow-studio input:focus-visible,
+:root[data-theme="dark"] .workflow-studio textarea:focus-visible,
+:root[data-theme="dark"] .workflow-studio select:focus-visible,
+:root[data-theme="dark"] .workflow-studio button:focus-visible {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+:root[data-theme="dark"] .workflow-studio button {
+  color: #cbd5e1;
+  border-color: #3b4050;
+}
+
+:root[data-theme="dark"] .workflow-studio button:hover {
+  background-color: #282b37;
+}
+
+:root[data-theme="dark"] .workflow-studio .react-flow__background {
+  background-color: #12141c;
+}
+
+:root[data-theme="dark"] .workflow-studio .react-flow__controls,
+:root[data-theme="dark"] .workflow-studio .react-flow__minimap {
+  background-color: #1a1c26;
+  border-color: #282b37;
+}
+
+:root[data-theme="dark"] .workflow-studio .react-flow__controls button {
+  color: #cbd5e1;
+  background-color: #1a1c26;
+  border-color: #282b37;
+}
