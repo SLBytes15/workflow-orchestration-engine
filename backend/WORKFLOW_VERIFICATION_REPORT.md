@@ -449,3 +449,527 @@ seven preserved untracked files, and a stash. Those local items must remain
 untouched during any later integration. No branch integration was performed
 here. The findings and proposed work should be shared with Saransh and the
 frontend owner before any code changes.
+
+## Branch/API verification and backend gap update — 5 November 2026
+
+This update supersedes earlier remote-reference counts and branch/API
+comparisons above. It records source inspection separately from tests actually
+run in the assigned checkout. Remote-ref source and test files were inspected
+read-only; they were not checked out or executed. No live database, deployed
+service, manual WebSocket flow, or load test was used.
+
+### A. Starting Git state and branch comparison
+
+| Point | `HEAD` / `origin/main` / `origin/member/mahak` |
+|---|---|
+| Starting local branch and `HEAD` | `member/mahak`, `eecb7ef8273ac87915014df0b1a52f6a69e167b8` |
+| Remote refs before fetch | `origin/main` `dde30bc7d3e1e548ad34df292724277b3590db24`; `origin/member/mahak` `eecb7ef8273ac87915014df0b1a52f6a69e167b8` |
+| Fetched refs after read-only fetch | `origin/main` `bd7cad62857445f80c91c83763a13751e33a155f`; `origin/member/mahak` `e6cfd17e9fe599803bed928807a5f6321dc04dd0` |
+
+At the start, there were no tracked or staged changes. The seven untracked
+files listed in the 5 November task instructions were present and preserved.
+The existing stash was preserved:
+`stash@{0}: On member/mahak: temp: preserve Mahak websocket verification documentation`.
+After fetching, the local branch remained at its starting `HEAD`; it is 25
+commits behind `origin/member/mahak`.
+
+| Comparison (`git rev-list --left-right --count`) | Left-only | Right-only | Interpretation |
+|---|---:|---:|---|
+| `origin/main...member/mahak` | 36 | 0 | The local assigned branch is 36 commits behind main and has no commits absent from main. |
+| `origin/main...origin/member/mahak` | 11 | 0 | The fetched member ref is 11 commits behind main and has no commits absent from main. |
+| `member/mahak...origin/member/mahak` | 0 | 25 | The local checkout is 25 commits behind its fetched member ref. |
+
+The branch is not divergent from main at the recorded refs. There are no
+current member-only commits or files to cherry-pick. This does not mean that
+the branch work was authored only on main: the following Mahak-authored
+documentation work is reachable from main and remains in its history:
+
+| Commit | Author / subject | Changed files |
+|---|---|---|
+| `eecb7ef8273ac87915014df0b1a52f6a69e167b8` | Mahak Kahar — `docs: update backend verification and integration gap analysis` | `backend/WORKFLOW_VERIFICATION_REPORT.md`; `docs/backend/week3-retry-failure-persistence.md`; `docs/websocket-execution-updates.md`; `docs/workflow-api-auth-contract.md` |
+| `43e8b99cda7bebb65454440ec1ddc33e0879c0f8` | Mahak Kahar — `docs: record WebSocket QA integration evidence` | `docs/websocket-execution-updates.md` |
+| `e7d489e5b7b3c2dcedc13d96f33a2cbe2bdfb20d` | Mahak Kahar — `docs: reconcile WebSocket implementation and QA evidence` | `docs/websocket-execution-updates.md` |
+| `bd2775c33179b9363f99e7052b8193d3a5b0d8d7` | Mahak Kahar — `docs: complete Week 3 execution and QA documentation` | `docs/architecture.md`; `docs/backend/week3-retry-failure-persistence.md`; `docs/websocket-execution-updates.md`; `docs/workflow-api-auth-contract.md` |
+
+The WebSocket implementation commit
+`27300f2a70466ec1843646c7d5c7d48e41de883f` was authored by Nithin
+(nithin07-source), not Mahak, and is also present in the branch/main history.
+It changed the backend package manifests, app/index wiring, execution route
+and service, ticket and WebSocket services, their tests, and
+`docs/verification/2026-10-30-nithin.md`. The global execution API was
+introduced separately by Saransh in
+`406bacf5728963b23b5668bc9e8f0ca83c7ef456` (`feat(executions): add analytics
+and enhanced execution monitoring`, 1 November 2026). That commit changed:
+
+- Backend: `backend/src/models/WorkflowExecution.ts`,
+  `backend/src/models/models.test.ts`,
+  `backend/src/routes/execution.routes.ts`,
+  `backend/src/routes/execution.routes.test.ts`,
+  `backend/src/services/execution.service.ts`, and
+  `backend/src/services/execution.service.test.ts`.
+- Frontend: `frontend/src/api/executionApi.ts`,
+  `frontend/src/api/executionRealtime.ts`,
+  `frontend/src/executionHelpers.ts`,
+  `frontend/src/pages/ExecutionsPage.tsx`,
+  `frontend/src/pages/ExecutionsPage.css`,
+  and the added `frontend/tests/executionAnalytics.test.ts`,
+  `executionDrawer.test.ts`, `executionSearchValidation.test.ts`,
+  `executionsPageRender.test.ts`, and `globalExecutions.test.ts`, plus
+  updates to `frontend/tests/executionRealtime.test.ts`.
+
+The later Saransh commit `50417e0da85abd3bbb6ade7c8e54d5309a1e1ed3`
+hardens idempotency reservation fencing and abandoned-execution recovery; it
+is separate from implementing retry policy or a DLQ.
+
+### B. Global execution history and summary APIs
+
+The route router is mounted at `/api/executions` in `backend/src/app.ts`.
+The following contract is present on fetched `origin/main` and
+`origin/member/mahak`; it is **NOT IMPLEMENTED on the local assigned
+`member/mahak` checkout at `eecb7ef`**. The assigned checkout has only the
+per-workflow history route described below.
+
+| API | Source contract on fetched main | Authentication and scope | Evidence/status |
+|---|---|---|---|
+| `GET /api/executions` | No body. Query: `workflowId`, `status`, `from`, `to`, `executionId`, `limit`, `cursor`. `limit` defaults to 20 and must be an integer from 1 to 100. Status must be one of the seven execution statuses. IDs and dates are validated; `from` must not be later than `to`. Fixed stable order is `createdAt DESC, _id DESC`; the compound cursor carries creation time and ID. Response: `{ message, executions, pagination: { limit, hasMore, nextCursor } }`. | `X-API-Key` via tenant auth; service queries use the authenticated tenant ID. No caller-supplied tenant query establishes scope. This is tenant-global history, not a platform-wide admin endpoint. | **VERIFIED by source inspection on main only.** Route/service test sources cover filters, validation, cursor behavior, and tenant scoping; not run in this task. **NOT IMPLEMENTED on local assigned checkout.** |
+| `GET /api/executions/summary` | No body. Query: `workflowId`, `from`, `to`. Response: `{ summary, filter }`. `summary` contains `total`, `queued`, `running`, `completed`, `failed`, `compensating`, `compensated`, `compensationFailed`, `unsuccessful`, `successRate`, `failureRate`, and `avgDurationMs`; empty data yields zero counts/rates and `avgDurationMs: null`. Unsuccessful is `failed + compensated + compensationFailed`; rates use terminal count `completed + unsuccessful`. | `X-API-Key` via tenant auth; summary aggregation is tenant-scoped. No role-based platform-admin authorization is present on this route. | **VERIFIED by source inspection on main only.** Route tests include missing-key, default-filter, and tenant-scope cases; service tests cover filters, date validation, aggregation, and tenant match. Not run in this task. **NOT IMPLEMENTED on local assigned checkout.** |
+
+The list and summary endpoints derive data from persisted execution records,
+not mock frontend metrics. The aggregation policy treats `compensated` as an
+unsuccessful terminal outcome; confirm that product definition before relying
+on its user-facing success/failure rates. Summary is not a time-series API and
+does not provide P95/P99, worker latency, or quotas.
+
+On local `member/mahak`, the corresponding supported history is
+`GET /api/workflows/:workflowId/executions?limit=&cursor=`. It returns
+`{ message, executions, pagination: { limit, hasMore, nextCursor } }`; it is
+tenant-authenticated and does not provide global, status, date, or
+execution-ID filters. `GET /api/executions/:executionId` is the tenant-scoped
+detail route.
+
+### C. Frontend/backend contract matrix
+
+| Surface | Frontend expectation / actual use | Backend behavior on local assigned branch | Contract result and impact |
+|---|---|---|---|
+| Global execution history | Fetched main’s `ExecutionsPage` calls `getGlobalExecutions` with workflow, status, date, execution ID, limit, and cursor; its API client expects `executions` and `pagination`. | Only per-workflow history with `limit` and `cursor`; no global list or filter set. | **Mismatch across refs.** The current local page remains per-workflow and matches that route. Updating the frontend alone would fail against this checkout; review/integrate the main route and service together, do not recreate them. |
+| Summary/dashboard | Fetched main’s Dashboard, Analytics, and Executions pages call `getExecutionSummary`; the Dashboard also requests global execution lists. | No summary or analytics API on the assigned checkout. The current local dashboard derives workflow counts from frontend workflow state. | **Mismatch across refs.** Main’s tenant summary does not satisfy admin, quota, worker-latency, or failure-heatmap requirements. Do not treat frontend sample/local counts as persisted execution metrics. |
+| Workflow catalog | Current UI searches by name/description and filters status client-side after `GET /api/workflows`; the updated main UI also sorts client-side. | `GET /api/workflows` returns the authenticated tenant’s workflows, ordered by creation time descending; no server search, status filter, sort parameter, or pagination. | **PARTIAL, not a current functional mismatch.** Existing client-side controls operate on the full returned list. Server-side pagination/filtering is an optional scale enhancement until required by product criteria. |
+| Execution details | UI requests `GET /api/executions/:executionId` and renders persisted execution/node results, error and timestamps. | Returns `{ message, execution }` for a tenant-owned record; foreign-tenant and missing IDs are indistinguishable `404 EXECUTION_NOT_FOUND`. Stored fields include graph snapshot and node results; execution input is not persisted, ordinary nodes have no per-node start/end times, and `currentNodeId` is not continuously advanced. | **PARTIAL.** Existing detail fields align with current UI; do not promise absent input/progress/timing. If adding sensitive inputs, first approve redaction and retention policy. |
+| API error handling | API clients read `error.message` and use HTTP status fallbacks. | Auth failures are `401 { error: { code: "UNAUTHORIZED", message } }`; input/query/ID validation uses `400`; missing or cross-tenant execution detail uses `404`; unhandled errors use generic `500 INTERNAL_SERVER_ERROR`. Invalid JSON is `400 INVALID_JSON`. No distinct `403` authorization path or admin-role guard was found in the workflow/execution routes. | **Generally aligned for current tenant APIs.** There is no admin authorization contract to support platform-wide metrics. Keep not-found behavior tenant-safe; add role-boundary tests if admin endpoints are approved. |
+
+Remote source inspection also found main-only route and service tests for global
+history and summary (including summary authentication/default-filter/tenant
+scope tests and service filter/date/cursor/aggregation tests). They are
+**source-inspected, not executed**. The task’s local backend test run below
+cannot verify code absent from the local checkout.
+
+### D. Prioritized implementation gaps
+
+The requirement basis is `docs/requirements.md` (Weeks 3 and 4). Existing
+detailed analysis above remains applicable; this table updates its priorities
+against the fetched refs. “Before 10 November” is a proposed target, not
+implementation authorization.
+
+| Priority / classification | Requirement and verified behavior | Smallest safe next step; security risk | Acceptance criteria and tests | Effort / recommendation |
+|---|---|---|---|---|
+| P1 — required: retry and DLQ | Week 3 requires configurable retries and a DLQ. Runtime validates retry shape and strips orchestration-only fields, but invokes an action once; no durable attempt history, retry classification/scheduling, DLQ, or worker is implemented on main or the assigned checkout. | Saransh approves retryability, attempt/backoff limits, terminal-failure/DLQ/reprocess contract, and idempotency policy before implementation. Scope runtime/service/model and queue/worker boundary. Tenant-scope every retry and DLQ read/write; retries can duplicate external side effects. | Verify attempts/backoff and exhaustion; retryable/non-retryable classification; cancellation/timeouts; persistence/restart; duplicate dispatch/idempotency; tenant-isolated DLQ retrieval and authorized reprocessing. | **High / High. Before 10 November only after policy and idempotency approval.** |
+| P1 — required: isolated transformation | Week 3 requires isolated script execution. A bounded expression validator/evaluator exists, but it is not wired into the production execution handler; no OS/process sandbox or hard resource boundary is established. | Approve the isolation model, allowed operations, input/output limits, resource/time limits, and failure contract before wiring the evaluator. Do not equate validation with sandboxing. | Integration tests prove the approved expression path; invalid input/output rejection; timeout/resource limits; no arbitrary host access or cross-tenant data access; cancellation and failure persistence. | **High / High. Before 10 November only after security/design approval; otherwise do not run untrusted transforms.** |
+| P1 — required: admin, quotas, operational metrics | Week 4 requires an administrative dashboard, tenant quotas, failure heatmaps, and worker latency. The global summary on main is tenant-scoped execution analytics only; no quota enforcement/usage source, platform-admin role/route, worker-latency metric, or failure heatmap aggregation was found. | Define metric formulas, windows, quota source/enforcement, empty states, and tenant-admin vs platform-admin roles. Implement only metrics confirmed by requirements. Cross-tenant leakage is the primary risk. | Aggregation/date-boundary and empty-state tests; quota accounting/limit tests; role authorization; cross-tenant denial; ensure tenant credentials cannot request platform totals. | **High / High. Before 10 November for confirmed required metrics, after policy/role approval; defer unrequested visualizations.** |
+| P1 — required: scale/deployment evidence | Week 4 requires 1,000+ concurrent execution stress testing and worker scaling. This task ran no load test. Nithin’s 5 November main-branch readiness report distinguishes an L0 in-process harness from distributed/1,000-execution evidence; coordinate with Nithin and do not duplicate his testing. | Use the existing owner’s test plan and only an approved isolated environment. Agree what “concurrent execution” means, plus thresholds and deployment target. Never load-test shared/production MongoDB. | Produce reproducible workload, achieved concurrency, latency/error/queue measurements, and worker restart/scaling evidence; separately validate container/start behavior. | **High / High. Before 10 November only with explicit environment and measurable acceptance criteria; otherwise BLOCKED/NOT VERIFIED.** |
+| P1 — required: WebSocket tracing acceptance | Source and automated in-process tests cover ticket issuance, tenant binding, event delivery, and persistence ordering. Manual WebSocket scenarios WS-01 through WS-10 in `docs/websocket-execution-updates.md` remain **NOT RUN**; no live MongoDB/deployed evidence was produced here. | Run only in an approved isolated environment using disposable tenant data and redacted credentials. Preserve all ten actual-status fields; do not infer manual verification from unit tests. | Record sanitized evidence for ticket auth/expiry/reuse, tenant isolation, handshake, event payloads, persist-before-publish, send failure, reconnect, and REST reconciliation. | **Medium / Medium. Verify before 10 November only when the isolated environment is approved; otherwise NOT RUN.** |
+| P2 — required for the updated frontend | Main has global history/summary implementations and consumers; the current local assigned checkout does not. | Saransh reviews the existing main commits and authorizes integration as one compatible change (routes/service/model/index/client/pages/tests). Do not duplicate or cherry-pick an API implementation already reachable from main. Re-run tenant isolation and query/aggregation tests after integration. | Frontend and backend agree on list filters, cursor shape, summary fields/metric definitions, auth, empty/error states; tests cover filter combinations, stable pages, date boundaries, aggregation and cross-tenant denial. | **Medium / High. Before 10 November by approved integration/review, not parallel reimplementation.** |
+| P2 — frontend build blocker | Current page uses both error helpers but has no imports. Both helper implementations and tests already exist. | Frontend owner adds the two imports only, after approval; do not modify frontend here. | Focused helper tests and `npm run build` pass with no TypeScript diagnostics. | **Low / Low. Before 10 November; assigned to frontend owner.** |
+| P3 — optional: server-side workflow catalog search/page | Existing UI filters the full tenant list client-side; no acceptance threshold requiring server-side search or pagination was found. | Defer unless tenant list size/response-size criteria require it; if approved, preserve tenant-first filtering and allow-listed sort fields. | Query validation, stable pagination, empty pages, filters, and cross-tenant tests. | **Medium / Medium. Defer pending product/scale criteria.** |
+| P3 — optional metrics enhancements | The summary does not supply historical trend series or P95/P99; main UI reports trend unavailable and withholds percentiles. | Do not fabricate values. Define time buckets, timezone, percentile method, data retention and aggregation budget before adding. | Boundary, empty-bucket, percentile, and tenant-isolation tests. | **Medium / High. Defer pending product and cost approval.** |
+
+### E. Frontend build-helper investigation
+
+The actual `npm run build` from `frontend` failed with these seven
+diagnostics in `frontend/src/pages/ExecutionsPage.tsx`:
+
+| Line | Actual diagnostic |
+|---:|---|
+| 77 | `TS2304: Cannot find name 'sanitizeErrorMessage'.` |
+| 457 | `TS2552: Cannot find name 'getErrorText'. Did you mean 'errorText'?` |
+| 618 | `TS2304: Cannot find name 'getErrorText'.` |
+| 620 | `TS2304: Cannot find name 'getErrorText'.` |
+| 637 | `TS2304: Cannot find name 'getErrorText'.` |
+| 639 | `TS2304: Cannot find name 'getErrorText'.` |
+| 671 | `TS2304: Cannot find name 'sanitizeErrorMessage'.` |
+
+`sanitizeErrorMessage(message: string): string` and
+`getErrorText(error: WorkflowExecution['error']): string` are exported from
+`frontend/src/executionHelpers.ts` on the local branch and both fetched refs.
+The functions also have eight focused cases in
+`frontend/tests/themeAndExecutions.test.ts`. The page import is absent at the
+local `member/mahak` `HEAD`, but present on fetched `origin/member/mahak` and
+`origin/main`. The exact import needed on the local page is:
+
+```ts
+import { getErrorText, sanitizeErrorMessage } from '../executionHelpers'
+```
+
+No frontend source was changed.
+
+### F. Tests run and evidence limits
+
+| Working directory | Exact command | Result |
+|---|---|---|
+| `frontend` | `npm run build` | **Failed, exit 2**; exactly the seven TypeScript diagnostics above. |
+| `frontend` | `..\backend\node_modules\.bin\tsx.cmd --test tests\themeAndExecutions.test.ts` | **10 passed, 0 failed, 0 skipped** (8 helper cases and 2 theme cases); exit 0. |
+| `backend` | `.\node_modules\.bin\tsx.cmd --test src\routes\execution.routes.test.ts src\services\execution.service.test.ts src\services\execution.runtime.test.ts src\middleware\tenantAuth.middleware.test.ts` | **81 passed, 0 failed, 0 skipped**; exit 0. |
+
+The backend tests use injected service dependencies and in-process loopback
+HTTP servers; no shared/live MongoDB or production service was used. No setup
+error occurred. The frontend build is a compile/bundle check, not an API
+runtime check. No full-suite result is claimed from this task. Main-only global
+API tests were read but not run. WS-01–WS-10 remain **NOT RUN**; no load,
+manual integration, deployment, or live database test was run.
+
+### G. Integration recommendation, blockers, and final state
+
+The lowest-risk code integration, if Saransh approves it, is to fast-forward
+the assigned branch to reviewed `origin/main`; do not reimplement or
+cherry-pick the already-merged global APIs. The remote branch ancestry shows
+no member-only commits to lose. Before any future update, preserve the current
+unstaged report edit, all seven existing untracked files, and the stash; this
+investigation did not perform that integration.
+
+Decisions/approvals needed from Saransh:
+
+1. Whether and when to fast-forward `member/mahak` after review of main’s
+   global execution APIs, idempotency/recovery changes, and frontend overlap.
+2. Retry/DLQ semantics, idempotency and replay policy; transformation
+   isolation design; administrative roles, quota source, and metric formulas.
+3. Whether a safe isolated environment and measurable acceptance criteria
+   exist for WebSocket acceptance and distributed concurrency testing; align
+   with Nithin before any load test.
+4. Confirm the frontend owner will apply the import fix and rerun the build.
+
+**Final delivery boundary:** investigation and documentation only. No
+application source change, branch creation/switch, merge, rebase,
+cherry-pick, reset, staging, commit, or push was performed. The documentation
+update remains unstaged; the seven untracked files and existing stash remain
+preserved.
+
+## Supplemental upstream review (5 November 2026)
+
+This supplement records a fresh `git fetch origin` and read-only inspection of
+the current refs. It adds detail to the preceding API comparison and separates
+code present on upstream from behavior verified by runtime tests. The earlier
+report content was preserved.
+
+### Refreshed Git state
+
+| Ref / comparison | Verified value |
+|---|---|
+| Current branch and local `HEAD` | `member/mahak`, `eecb7ef8273ac87915014df0b1a52f6a69e167b8` |
+| Fetched `origin/main` | `bd7cad62857445f80c91c83763a13751e33a155f` |
+| Fetched `origin/member/mahak` | `e6cfd17e9fe599803bed928807a5f6321dc04dd0` |
+| `origin/main...HEAD` | 36 left-only, 0 right-only: local branch is 36 behind main |
+| `origin/main...origin/member/mahak` | 11 left-only, 0 right-only: remote member branch is 11 behind main |
+| `HEAD...origin/member/mahak` | 0 left-only, 25 right-only: local checkout is 25 behind its remote member ref |
+
+The starting `git status -sb` was `## member/mahak...origin/member/mahak
+[behind 25]`, with only the existing unstaged report edit and these seven
+untracked paths:
+
+- `backend/src/validators/workflow-graph.validator.test.ts.bak`
+- `backend/src/validators/workflow-graph.validator.test.ts.pre-bom-fix.bak`
+- `backend/zaalima-create-isolation-tenant.tmp.ts`
+- `backend/zaalima-list-keys.tmp.ts`
+- `backend/zaalima-list-tenants.tmp.ts`
+- `docs/backend/script-transformation-isolation-assessment.md`
+- `docs/backend/script-transformation-isolation-design.md`
+
+The existing stash remains
+`stash@{0}: On member/mahak: temp: preserve Mahak websocket verification documentation`.
+No branch-specific commits exist outside main. Local `HEAD` remains the merge
+base of `origin/main`; this refresh did not move it.
+
+### Execution API source verification
+
+The current upstream route is mounted at `/api/executions` in
+`backend/src/app.ts`. `backend/src/routes/execution.routes.ts` implements
+tenant-authenticated `GET /` through `service.listGlobalExecutions` and
+`GET /summary` through `service.getExecutionSummary`. The per-workflow history
+route and `GET /:executionId` remain present. The assigned checkout at local
+`HEAD` has only the per-workflow history and detail routes; its execution POST
+does not consume an `Idempotency-Key`.
+
+| Surface | Upstream contract and evidence | Assigned checkout |
+|---|---|---|
+| Global list | `GET /api/executions`; query parameters `workflowId`, `status`, `from`, `to`, `executionId`, `limit`, `cursor`. `listGlobalExecutions` validates IDs/status/dates and limit (default 20, range 1–100), filters on the authenticated tenant, and returns `{ message, executions, pagination: { limit, hasMore, nextCursor } }`. | No global list route or global service method. |
+| Cursor paging | `encodeGlobalCursor` / `decodeGlobalCursor` encode `createdAt` plus execution ID. The query uses a stable `createdAt DESC, _id DESC` order and a compound less-than cursor predicate; it reads `limit + 1` records to derive `hasMore`. | Per-workflow history uses its own ID cursor; no global compound cursor. |
+| Summary | `GET /api/executions/summary`; accepts `workflowId`, `from`, `to`; returns `{ summary, filter }`. Counts include `total`, each execution status, `unsuccessful`, `successRate`, `failureRate`, and `avgDurationMs`. `unsuccessful` includes failed, compensated, and compensation-failed executions; rates use terminal executions. | No summary route or summary service method. |
+| Auth and scope | `tenantAuth.middleware.ts` resolves `x-api-key` and sets trusted `req.tenantContext.tenantId`. Both services receive that tenant ID and include it in execution queries/aggregation. Caller query/body tenant IDs do not set scope. No platform-admin role guard is provided by these endpoints. | Tenant-authenticated workflow history and detail remain; global list/summary are absent. |
+| Detail and node persistence | `getExecution` queries by execution ID plus tenant ID. Upstream `WorkflowExecution`/runtime persist node results, compensation state, and per-node start/completion timestamps; the detail response returns the persisted execution. | Detail is tenant-scoped and persists node results, but this ref lacks the later node timing fields and global analytics contract. |
+| Frontend | `frontend/src/api/executionApi.ts` exposes `getGlobalExecutions` and `getExecutionSummary`; the executions, dashboard, and analytics pages call them. API tests include unauthenticated and cross-tenant cases; service tests cover tenant filtering, statuses, date/ID filters, malformed cursors, and compound cursor paging. | The current frontend remains paired to per-workflow history; integrating only the newer frontend contract would not work against this backend. |
+
+These are source and test-file findings, not test results from this refresh.
+The relevant upstream files are
+`backend/src/routes/execution.routes.ts`,
+`backend/src/services/execution.service.ts`,
+`backend/src/models/WorkflowExecution.ts`,
+`backend/src/middleware/tenantAuth.middleware.ts`,
+`frontend/src/api/executionApi.ts`, and their route/service/frontend tests.
+
+### Idempotency implementation matrix
+
+Statuses below describe code at fetched `origin/main`; local status refers to
+the assigned checkout at `eecb7ef`. “Implemented” is source-level evidence,
+not a claim that the current deployment or MongoDB indexes were tested here.
+
+| Finding | `origin/main` status and evidence | Local `member/mahak` status |
+|---|---|---|
+| Key acceptance and payload binding | **IMPLEMENTED.** The execution POST accepts an optional `Idempotency-Key`; canonical JSON input is SHA-256 hashed. Same-key/different-payload requests return 409; a completed same-payload request returns its cached response. | **NOT IMPLEMENTED.** No key header handling/service/model is present. Requests without a key are not deduplicated on either ref. |
+| Persistent reservation and expiry | **IMPLEMENTED (source).** `IdempotencyRecord` stores tenant, workflow, key, payload hash, status, execution ID, reservation token, cached response, and expiry. Unique index is `(tenantId, workflowId, key)`; a TTL index uses `expiresAt`. Default key TTL is 24 hours; application code checks expiry before MongoDB's asynchronous TTL cleanup. | **NOT IMPLEMENTED.** |
+| Tenant scope | **IMPLEMENTED (source).** The compound key includes tenant and workflow; reservation, lookup, completion, and deletion use trusted tenant context. Route/service tests cover per-tenant key scope. | **NOT IMPLEMENTED** for idempotency. Existing execution APIs remain tenant-scoped. |
+| Concurrent duplicates and fencing | **IMPLEMENTED (source), runtime NOT VERIFIED here.** Atomic insert/replace and the unique index handle duplicate-key races; the route returns 409 for an in-flight key. Reservation UUIDs and ownership checks fence superseded owners. | **NOT IMPLEMENTED.** |
+| Failure and retry behavior | **PARTIALLY IMPLEMENTED.** If `startExecution` throws, the owning reservation is cleared so a caller may try again. A terminal failed execution is instead recorded as completed and its failed response is replayed for the same key. Declared task retry policy is not executed; retry scheduling, durable attempt history, and DLQ are **NOT IMPLEMENTED**. | Idempotency failure handling and automatic retry/DLQ are **NOT IMPLEMENTED**. |
+| Abandoned reservation recovery | **PARTIALLY IMPLEMENTED.** A repeated request reconciles an in-flight record: preserve active/compensating work; return cached response for terminal work; safely reclaim only a stale reservation whose preallocated execution record does not exist. A per-tenant periodic `IdempotencyRecoveryWorker` is defined and has tests, but repository references show it is not started/wired by application code. The separate execution recovery analyzer is also not wired to a production worker. | **NOT IMPLEMENTED.** |
+| Automated evidence | Upstream unit/route test sources cover replay, mismatches, tenant scope, duplicate-key races, expiry, failure release, and recovery. MongoDB integration test sources check durable multi-instance records and indexes, but skip when `MONGODB_URI` is absent/unavailable. None of these upstream tests were run in this refresh. | The prior local test results remain as recorded above; no tests were run for this supplemental review. |
+
+The primary implementation was introduced by Saransh's
+`50417e0da85abd3bbb6ade7c8e54d5309a1e1ed3`
+(`fix(engine): add reservation fencing token and harden idempotency concurrency`,
+2 November 2026). It adds the idempotency service/model and tests, changes the
+execution route/runtime/service and `WorkflowExecution`, and adds recovery
+analysis/tests. The global list/summary API and frontend integration were
+introduced separately by
+`406bacf5728963b23b5668bc9e8f0ca83c7ef456`
+(`feat(executions): add analytics and enhanced execution monitoring`,
+1 November 2026). Both commits are ancestors of fetched `origin/member/mahak`
+and `origin/main`, but neither is in the assigned local checkout.
+
+### Incoming changes and merge readiness
+
+From local `HEAD` to `origin/main`, Git reports 61 changed paths (19,784
+insertions, 2,346 deletions). The material changes are backend execution
+routes/services/runtime, node result persistence, the new idempotency model
+and service, recovery code, concurrency benchmark, and their tests; frontend
+execution API, monitoring pages, realtime helpers, workflow UI, and tests;
+and README/verification/architecture documentation. The seven untracked paths
+were individually checked against `origin/main`; none collides. The committed
+verification report path is unchanged between local `HEAD` and `origin/main`,
+so the existing unstaged edit has no upstream file-level overlap. No package
+manifest/lockfile change was found. Schema/index changes are Mongoose model
+definitions, with no migration script identified; target MongoDB index
+creation still needs verification before deployment.
+
+The fetched `origin/main` has 10 file changes beyond
+`origin/member/mahak`: three verification/retry-DLQ documents and seven CSS
+files. The latest Nithin verification notes say retry execution and DLQ remain
+not implemented and that recovery analysis exists but is unwired. These are
+documentation/UI changes, not additional execution API code.
+
+**Recommendation: ready for a reviewed fast-forward only after Saransh
+approves; do not integrate as part of this investigation.** Local `HEAD` is an
+ancestor of main and has no unique commits to preserve. The API changes are
+additive and retain per-workflow history/detail, but the newer frontend and
+backend must be integrated together. Before approval, decide whether to wire
+the periodic per-tenant recovery worker and confirm the 24-hour key-retention
+and terminal-failure replay policy. After approval, run backend build/tests,
+MongoDB integration with an approved disposable database (including unique
+and TTL index creation), frontend tests/build, tenant-isolation and concurrent
+duplicate checks, and only then any separately approved load/WebSocket
+acceptance tests. No such checks or integration were performed here.
+
+### Supplemental delivery boundary
+
+The only edit in this refresh is this appended report section. No application
+source was changed and no branch integration or delivery operation was
+performed. `HEAD` stayed `eecb7ef8273ac87915014df0b1a52f6a69e167b8`;
+the report remains unstaged, all seven untracked files and the existing stash
+remain preserved.
+
+## Post-fast-forward execution and recovery verification (5 November 2026)
+
+This section supersedes the earlier “do not integrate” recommendation and
+pre-integration final-state statements above. The integration below was
+explicitly approved in the supplied task and performed only after its safety
+checks passed. Earlier audit evidence and the original unstaged report text
+remain intact.
+
+### A. Pre-integration safety, backup, and fast-forward
+
+Phase A verified branch `member/mahak`, starting `HEAD`
+`eecb7ef8273ac87915014df0b1a52f6a69e167b8`, the expected unstaged report
+edit, no staged changes, the seven preserved untracked files, and the existing
+stash. Before fetching, the complete report and its unstaged Git diff were
+backed up outside the repository:
+
+- Report copy: `C:\Users\Mahak\AppData\Local\Temp\workflow-orchestration-engine-member-mahak-20261105-230210462\WORKFLOW_VERIFICATION_REPORT.md`
+- Unstaged patch: `C:\Users\Mahak\AppData\Local\Temp\workflow-orchestration-engine-member-mahak-20261105-230210462\WORKFLOW_VERIFICATION_REPORT.unstaged.patch`
+- Pre-integration report SHA-256: `D7540E62531B771001C56104A7C529393E74D1E5F3F2A04F302B0953A248E7EF`
+
+Both external files existed and were verified; the report copy hash matched
+the working report. After fetching, preflight found no incoming change to
+`backend/WORKFLOW_VERIFICATION_REPORT.md`, no collision with any of the seven
+untracked paths, and no unexpected modified or staged files. Only then was
+the approved command run:
+
+```text
+git merge --ff-only origin/main
+```
+
+It succeeded as a fast-forward from `eecb7ef` to
+`bd7cad62857445f80c91c83763a13751e33a155f`. The report was byte-for-byte
+identical to its external backup immediately after integration, confirming
+the pre-existing unstaged content was preserved. This section was appended
+after that comparison. No source files were changed. No branch was created
+or switched, and no stage, commit, push, rebase, cherry-pick, reset, or other
+integration operation occurred.
+
+### B. Integrated API and idempotency verification
+
+The fetched/integrated `HEAD` is `bd7cad62857445f80c91c83763a13751e33a155f`,
+matching fetched `origin/main`. The API, cursor, authentication, and
+idempotency source findings in the preceding supplement are now present in
+the working branch. Focused route/service/frontend tests run after the
+fast-forward are recorded below; they are in-process tests, not live service
+or database verification.
+
+The execution POST handles `Idempotency-Key` in
+`backend/src/routes/execution.routes.ts`. It hashes the canonical JSON input,
+reserves by authenticated tenant + workflow + key, replays a cached response
+for a matching completed request, and returns 409 for a changed payload or
+an active in-flight request. If `startExecution` throws, the owning
+reservation is cleared. A returned terminal failed execution is recorded as
+completed, so a repeat with the same key replays that failed result rather
+than dispatching again. This is intentionally distinct from an automatic
+retry policy.
+
+### C. Retention and MongoDB TTL evidence
+
+The idempotency service default is 24 hours (`ttlMs = 24 * 60 * 60 * 1000`);
+completion refreshes `expiresAt` relative to the completion time. The model
+declares a TTL index on `expiresAt` with `expireAfterSeconds: 0`, and the
+service also checks `expiresAt` in application logic before treating an
+existing key as live.
+
+**PENDING COORDINATOR CONFIRMATION — NOT AN OFFICIALLY APPROVED POLICY.**
+The 24-hour default is an implementation default only, not an approved
+retention decision. MongoDB TTL deletion is asynchronous/eventual, not a
+guarantee that a record disappears exactly at its expiry timestamp. The
+conditional integration test calls `syncIndexes()` and asserts the declared
+unique and TTL indexes, but it does not demonstrate actual TTL deletion at an
+exact time. No `MONGODB_URI` was configured in the process environment and no
+approved isolated MongoDB URI/environment was available. Therefore:
+
+- TTL index creation in a running database: **NOT VERIFIED**.
+- Actual TTL expiration/deletion: **NOT VERIFIED / NOT RUN**.
+- No shared or production database was contacted.
+
+### D. Reservation recovery worker assessment
+
+The `IdempotencyRecoveryWorker` is implemented as a class in
+`backend/src/services/executionIdempotency.ts`, with memory-backed/unit tests.
+It scans stale in-flight records for one supplied tenant and calls
+`reconcileInFlightReservation`. The reconciliation logic preserves queued,
+running, and compensating execution records; it reconstructs cached responses
+for terminal records; and it can reclaim a stale reservation only when its
+preallocated execution record is missing. The reclaim update uses tenant,
+workflow, key, status, execution ID, prior reservation token, and prior
+`updatedAt` as a compare-and-set filter before replacing the token.
+
+| Requirement | Finding |
+|---|---|
+| Start only after DB readiness | **NOT IMPLEMENTED.** The server awaits `connectDatabase()` before listening, but the recovery worker is not constructed or started by `index.ts`. |
+| Create and verify indexes before processing | **NOT IMPLEMENTED / NOT VERIFIED.** The model declares indexes; startup awaits `mongoose.connect()` only. No startup `syncIndexes()`/verification gate was found. |
+| Expiry and recovery eligibility | **PARTIAL.** Request-time service checks `expiresAt`; recovery scans by record age and execution state. This is not proof of MongoDB TTL expiry. |
+| Reservation fencing | **PARTIAL / source verified.** A stale reclaim is fenced by a conditional update and new UUID token; the execution route checks reservation ownership before starting execution. No cross-process runtime test was run here. |
+| Tenant scope | **IMPLEMENTED in the service.** Worker construction requires one tenant ID and database scans filter by it. No startup tenant enumeration or per-tenant worker lifecycle exists. |
+| Multiple worker instances | **PARTIAL / NOT VERIFIED.** The local `isReconciling` flag prevents overlapping runs only inside one process. Compare-and-set protects the stale missing-execution reclaim, but there is no distributed worker lease/election; multi-instance recovery was not tested. |
+| Processing errors | **NOT IMPLEMENTED safely.** The interval callback ends in `.catch(() => {})`, silently discarding rejected `runOnce()` errors. |
+| Shutdown | **PARTIAL.** The worker clears its timer and waits for its own in-flight reconciliation. `index.ts` graceful shutdown stops the change-stream watcher, WebSocket server, and HTTP server, but has no recovery-worker stop hook. |
+| Startup failure cleanup | **NOT VERIFIED / NOT IMPLEMENTED for this worker.** Existing startup cleanup covers the change-stream watcher and server only. |
+| Lifecycle test coverage | **PARTIAL.** Unit tests cover worker periodic start/stop and service recovery cases. `index.test.ts` covers current database/listen/watcher ordering and shutdown, not recovery-worker lifecycle, DB-not-ready, startup index verification, or error logging. No MongoDB-backed recovery test ran here. |
+
+**Worker wiring decision: BLOCKED; no implementation made.** This is not a
+small startup-only integration with sufficiently defined safety semantics.
+The worker requires a tenant ID, but startup has no tenant enumeration/
+provisioning contract; index readiness has no explicit gate; scheduled errors
+are silently swallowed; and multi-instance coordination is not established.
+The task explicitly says to stop rather than guess when readiness, index,
+fencing, or shutdown semantics are unclear. Before wiring, decide the
+tenant-discovery/lifecycle model, verify indexes before starting, replace
+silent failure handling with observable logging/retry policy, and establish
+multi-instance ownership and shutdown guarantees.
+
+### E. Focused validation actually run
+
+No dependencies were installed or updated.
+
+| Working directory | Exact command | Result |
+|---|---|---|
+| `backend/` | `.\node_modules\.bin\tsx.cmd --test src\services\executionIdempotency.test.ts src\services\executionRecovery.test.ts src\routes\execution.routes.test.ts src\index.test.ts` | **72 passed, 0 failed, 0 skipped**. Covers memory-backed idempotency/recovery, routes, and existing server lifecycle. It does not exercise the unrun Mongo integration file or new recovery-worker startup wiring. |
+| `backend/` | `.\node_modules\.bin\tsx.cmd --test src\services\execution.service.test.ts` | **55 passed, 0 failed, 0 skipped**. |
+| Repository root | `.\backend\node_modules\.bin\tsx.cmd --test frontend\tests\globalExecutions.test.ts` | **13 passed, 0 failed, 0 skipped**. |
+
+The Mongoose idempotency integration tests, TTL/index checks against MongoDB,
+live persistence/expiry, distributed recovery, and retry/DLQ tests against a
+live worker were **NOT RUN**. The first three commands validate only the
+executed tests and their injected/in-memory paths. No full build or full test
+suite is claimed for this post-fast-forward task.
+
+### F. Retry/DLQ plan and Nithin coordination draft
+
+Retry execution and a durable DLQ remain **NOT IMPLEMENTED**. The integrated
+tests explicitly verify that a declared node retry policy does not currently
+cause an action retry. No public API or state-machine change is authorized by
+this report.
+
+Minimal plan for review before implementation:
+
+1. Define typed transient/permanent failure categories. Treat unknown or
+   side-effect-ambiguous outcomes as non-retryable until classified.
+2. Approve bounded attempts (including whether the count includes the first
+   attempt), exponential backoff base/cap/jitter, task timeout, and
+   cancellation behavior.
+3. Persist attempt number, failure classification, next-attempt time, and
+   enough execution/node checkpoint state to survive restart without
+   replaying already-completed side effects.
+4. Define terminal transition and persist an exhausted execution to a
+   tenant-scoped durable DLQ record, with sanitized error and attempt
+   history.
+5. Define explicit, authorized redrive semantics: which roles may redrive,
+   whether redrive resumes a safe checkpoint or creates a new execution, and
+   how redrive itself is idempotent.
+6. Preserve tenant filters for retry scans, DLQ reads/writes, and redrive.
+   Never automatically repeat an action whose side-effect outcome is
+   uncertain.
+7. Test failure classification, attempt bounds/backoff, restart persistence,
+   terminal exhaustion, DLQ tenant isolation, authorization, idempotent
+   redrive, cancellation, and ambiguous side effects. Add approved isolated
+   MongoDB tests for persistence and concurrency before claiming distributed
+   behavior.
+
+**Draft coordination message for Nithin — not sent:**
+
+> I fast-forwarded `member/mahak` to `bd7cad6` after the approved preflight.
+> Source and focused in-process tests confirm global execution list/summary
+> and tenant/workflow-scoped idempotency with payload hashing, cached replay,
+> TTL/unique index declarations, and fencing. The 24-hour key lifetime is
+> still pending coordinator confirmation; MongoDB index creation/TTL expiry
+> were not tested. The reservation recovery class exists, but it is not wired
+> into startup; it is per-tenant, has no startup index-readiness gate, silently
+> swallows scheduled errors, and has no distributed worker lease/lifecycle
+> integration. Retry execution, durable attempt state, DLQ, and redrive remain
+> unimplemented. Could we align the minimal retry/DLQ plan with your
+> concurrency assessment: transient/permanent classification, attempt/backoff
+> policy, persisted next-attempt and checkpoint state, terminal exhaustion,
+> DLQ access/redrive authorization and idempotency, and tests for tenant
+> isolation/restart/concurrent dispatch? I have not contacted anyone or run a
+> load test.
+
+No claim of communication with Nithin is made.
+
+### G. Post-fast-forward delivery state
+
+The only working-tree edit after the fast-forward is this appended report
+section. The report's pre-fast-forward backup and patch remain outside the
+repository. The original report bytes were verified equal to the backup
+immediately after the fast-forward and before this append. The original
+unstaged report changes, all seven untracked files, and the existing stash
+remain preserved. No application source changes were made.
