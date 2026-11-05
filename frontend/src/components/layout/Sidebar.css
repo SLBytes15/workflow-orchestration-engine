@@ -274,3 +274,15 @@ button.sidebar-link {
     transition: none;
   }
 }
+
+/* DARK THEME OVERRIDES - SWATHI */
+:root[data-theme="dark"] .sidebar {
+  border-right-color: var(--border);
+}
+
+:root[data-theme="dark"] .sidebar-subtitle,
+:root[data-theme="dark"] .sidebar-group__label,
+:root[data-theme="dark"] .sidebar-link--planned,
+:root[data-theme="dark"] .sidebar-planned-label {
+  color: var(--text-secondary);
+}

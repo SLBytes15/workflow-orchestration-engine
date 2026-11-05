@@ -808,3 +808,62 @@
   }
 }
 
+
+/* DARK THEME OVERRIDES - SWATHI */
+:root[data-theme="dark"] .analytics-page {
+  color: #cbd5e1;
+  background-color: #12141c;
+}
+
+:root[data-theme="dark"] .analytics-page [class*="card"],
+:root[data-theme="dark"] .analytics-page [class*="panel"],
+:root[data-theme="dark"] .analytics-page [class*="toolbar"],
+:root[data-theme="dark"] .analytics-page [class*="filter"],
+:root[data-theme="dark"] .analytics-page [class*="empty"],
+:root[data-theme="dark"] .analytics-page [class*="spec"],
+:root[data-theme="dark"] .analytics-page [class*="metric"] {
+  color: #cbd5e1;
+  background-color: #1a1c26;
+  border-color: #282b37;
+}
+
+:root[data-theme="dark"] .analytics-page h1,
+:root[data-theme="dark"] .analytics-page h2,
+:root[data-theme="dark"] .analytics-page h3,
+:root[data-theme="dark"] .analytics-page strong {
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .analytics-page p,
+:root[data-theme="dark"] .analytics-page label,
+:root[data-theme="dark"] .analytics-page small,
+:root[data-theme="dark"] .analytics-page [class*="subtitle"],
+:root[data-theme="dark"] .analytics-page [class*="description"] {
+  color: #94a3b8;
+}
+
+:root[data-theme="dark"] .analytics-page input,
+:root[data-theme="dark"] .analytics-page select,
+:root[data-theme="dark"] .analytics-page textarea {
+  color: #f8fafc;
+  background-color: #161822;
+  border-color: #3b4050;
+}
+
+:root[data-theme="dark"] .analytics-page button:focus-visible,
+:root[data-theme="dark"] .analytics-page input:focus-visible,
+:root[data-theme="dark"] .analytics-page select:focus-visible {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+:root[data-theme="dark"] .analytics-page table th {
+  color: #cbd5e1;
+  background-color: #161822;
+  border-color: #282b37;
+}
+
+:root[data-theme="dark"] .analytics-page table td {
+  color: #cbd5e1;
+  border-color: #282b37;
+}

@@ -1580,3 +1580,73 @@
     transition: none !important;
   }
 }
+
+/* DARK THEME OVERRIDES - SWATHI */
+:root[data-theme="dark"] .executions-page {
+  color: #cbd5e1;
+  background-color: #12141c;
+}
+
+:root[data-theme="dark"] .executions-page [class*="card"],
+:root[data-theme="dark"] .executions-page [class*="panel"],
+:root[data-theme="dark"] .executions-page [class*="drawer"],
+:root[data-theme="dark"] .executions-page [class*="toolbar"],
+:root[data-theme="dark"] .executions-page [class*="filter"],
+:root[data-theme="dark"] .executions-page [class*="timeline"],
+:root[data-theme="dark"] .executions-page [class*="overview"],
+:root[data-theme="dark"] .executions-page [class*="compensation"],
+:root[data-theme="dark"] .executions-page [class*="node-list"],
+:root[data-theme="dark"] .executions-page [class*="state"] {
+  color: #cbd5e1;
+  background-color: #1a1c26;
+  border-color: #282b37;
+}
+
+:root[data-theme="dark"] .executions-page h1,
+:root[data-theme="dark"] .executions-page h2,
+:root[data-theme="dark"] .executions-page h3,
+:root[data-theme="dark"] .executions-page strong {
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .executions-page p,
+:root[data-theme="dark"] .executions-page label,
+:root[data-theme="dark"] .executions-page small,
+:root[data-theme="dark"] .executions-page [class*="description"],
+:root[data-theme="dark"] .executions-page [class*="secondary"] {
+  color: #94a3b8;
+}
+
+:root[data-theme="dark"] .executions-page input,
+:root[data-theme="dark"] .executions-page select,
+:root[data-theme="dark"] .executions-page textarea {
+  color: #f8fafc;
+  background-color: #161822;
+  border-color: #3b4050;
+}
+
+:root[data-theme="dark"] .executions-page button:focus-visible,
+:root[data-theme="dark"] .executions-page input:focus-visible,
+:root[data-theme="dark"] .executions-page select:focus-visible {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+:root[data-theme="dark"] .executions-page table th {
+  color: #cbd5e1;
+  background-color: #161822;
+  border-color: #282b37;
+}
+
+:root[data-theme="dark"] .executions-page table td {
+  color: #cbd5e1;
+  border-color: #282b37;
+}
+
+:root[data-theme="dark"] .executions-page [class*="json"],
+:root[data-theme="dark"] .executions-page pre,
+:root[data-theme="dark"] .executions-page code {
+  color: #e2e8f0;
+  background-color: #1e293b;
+  border-color: #334155;
+}
