@@ -973,3 +973,453 @@ repository. The original report bytes were verified equal to the backup
 immediately after the fast-forward and before this append. The original
 unstaged report changes, all seven untracked files, and the existing stash
 remain preserved. No application source changes were made.
+
+## 6 November 2026 — Upstream API, Idempotency and Recovery Verification
+
+### Scope, starting state, and evidence labels
+
+This audit was performed on `member/mahak` at
+`5a12e3f84c3f10f592b7899623adc5a3af820d8b`. The starting working tree had
+only the seven protected untracked files listed in the earlier report;
+there were no tracked or staged changes. `stash@{0}` remained
+`temp: preserve Mahak websocket verification documentation`. No upstream
+fetch or integration operation was performed during this audit.
+
+Before editing this report, a byte-for-byte backup was created outside the
+repository at
+`C:\Users\Mahak\AppData\Local\Temp\workflow-orchestration-engine-WORKFLOW_VERIFICATION_REPORT-before-20261106-20261106-233522.md`.
+Its SHA-256 matched the source report:
+`0D4D2F0273BCD8A0AF0EA99A1F98DA82AB2D4A1B4010980B61D00A4861828997`.
+
+Evidence labels in this section mean:
+
+- **VERIFIED** — directly supported by inspected source or an executed test.
+- **PARTIAL** — some behavior is supported, but relevant verification is incomplete.
+- **MISSING** — required implementation is absent from inspected source.
+- **UNKNOWN** — available evidence is insufficient to decide.
+- **NOT TESTED** — behavior was not executed or validated.
+
+Automated tests used in-process handlers, injected dependencies, memory
+stores, or schema metadata. They are not live database, deployment, or
+multi-instance evidence.
+
+### A. Global execution history — `GET /api/executions`
+
+| Requirement | Finding | Source and test evidence |
+|---|---|---|
+| Authentication | **VERIFIED** | `backend/src/app.ts` mounts the execution router at `/api/executions`; `backend/src/routes/execution.routes.ts` applies `tenantAuthMiddleware` to `GET /`. `backend/src/middleware/tenantAuth.middleware.ts` rejects missing or unresolved `X-API-Key` with HTTP 401 and obtains tenant context through `backend/src/services/tenantResolver.ts`. |
+| Tenant identity manipulation | **VERIFIED** | The route passes only `req.tenantContext.tenantId` and selected query parameters to the service. A query `tenantId` is not used as identity and is not forwarded. Identity is resolved from the API key hash and active key/tenant records. |
+| Database tenant scope | **VERIFIED** | `backend/src/services/execution.service.ts` always includes the trusted `tenantId` in global history's MongoDB filter before calling `WorkflowExecutionModel.find(filter)`. Optional filters are combined with that tenant predicate. The service test captures this filter. |
+| Cross-tenant isolation | **PARTIAL** | Source and service test support tenant scoping. Existing route isolation coverage is for per-workflow history, not a direct second-tenant request to `GET /api/executions`; no live MongoDB or cross-tenant global-route test was run. |
+| Missing/invalid tenant context | **VERIFIED** | Missing/invalid API key is rejected by middleware with `{ error: { code: "UNAUTHORIZED", message: "A valid API key is required" } }` and HTTP 401. The route also returns the same response if authenticated context is unexpectedly absent. Resolver/database errors flow to the generic HTTP 500 handler. |
+| Response contract | **VERIFIED** | Route returns `{ message, executions, pagination }`, where `pagination` is `{ limit, hasMore, nextCursor }`. `executions` are raw lean execution documents; the model defines `_id`, `tenantId`, `workflowId`, `workflowVersion`, `status`, `graphSnapshot`, `currentNodeId`, `nodeResults`, optional compensation metadata, `error`, `startedAt`, `completedAt`, and timestamp fields. There is no computed `duration`, `workflowName`, or total-result count in this response. |
+| Pagination | **VERIFIED** | Default `limit` is 20; accepted range is integer 1–100 inclusive. Invalid, fractional, zero, or over-100 values yield `ExecutionServiceError` HTTP 400 / `VALIDATION_ERROR`. Query fetches `limit + 1`; `hasMore` is based on the extra record. No total count is returned. |
+| Cursor and ordering | **VERIFIED** | The opaque base64url cursor encodes `{ createdAt, id }`. The DB query sorts by `{ createdAt: -1, _id: -1 }`; next-page filtering uses earlier `createdAt`, then lower `_id` for ties. This is deterministic for the sort keys; behavior under concurrent inserts/updates was **NOT TESTED**. Malformed cursor JSON, timestamp, or 24-character ID is rejected with HTTP 400. |
+| Filters | **VERIFIED** | Supported service filters are `workflowId`, one of the seven defined `status` values, inclusive `from`/`to` bounds on `createdAt`, exact `executionId`, `limit`, and `cursor`. Invalid IDs, statuses, dates, reversed date ranges, and limits are rejected. The query executes in MongoDB; filtering is not applied after retrieval. |
+| Search, sort, and unknown parameters | **PARTIAL** | The UI's execution-ID search maps to the exact `executionId` filter; no free-text search exists. No sort field or direction is supported by the route/service/client, and the DB order is fixed. Unrecognized parameters such as `sort` or `tenantId` are not forwarded or explicitly rejected; they are ignored. |
+| Empty result | **VERIFIED** | Service returns `executions: []` with `{ limit, hasMore: false, nextCursor: null }`. This is covered by an injected-dependency service test. |
+| Route-level coverage | **PARTIAL** | `backend/src/routes/execution.routes.test.ts` exercises execution route authentication and per-workflow history, but does not directly exercise the global history route. Global filters and pagination are tested at service level in `backend/src/services/execution.service.test.ts`. |
+
+Validation errors are serialized as
+`{ error: { code: "VALIDATION_ERROR", message } }`. Unexpected errors are
+logged server-side and returned as generic
+`{ error: { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred." } }`.
+
+### B. Global execution summary — `GET /api/executions/summary`
+
+| Requirement | Finding | Source and test evidence |
+|---|---|---|
+| Authentication and tenant scope | **VERIFIED** | Uses the same tenant-auth middleware. `getExecutionSummary` begins its MongoDB aggregation with `$match: { tenantId }`; optional workflow/date predicates are added to that match. Route and service tests check authenticated context and the tenant-scoped aggregation pipeline. |
+| Response shape and empty results | **VERIFIED** | Returns `{ summary, filter }`. `summary` contains `total`, `queued`, `running`, `completed`, `failed`, `compensating`, `compensated`, `compensationFailed`, `unsuccessful`, `successRate`, `failureRate`, and `avgDurationMs`; `filter` contains nullable `workflowId`, `from`, and `to`. Empty aggregation returns zero counts/rates and `avgDurationMs: null`. |
+| Metric calculation | **VERIFIED** | MongoDB `$group` counts all seven statuses and sums valid nonnegative `completedAt - startedAt` durations. `unsuccessful` is `failed + compensated + compensation_failed`; rates use terminal count (`completed + unsuccessful`) and are percentages rounded to two decimal places. Average duration is rounded milliseconds or null if there are no eligible durations. |
+| Time window and filters | **VERIFIED** | Supports optional workflow ID and inclusive `from`/`to` bounds over `createdAt`, validated before aggregation. Invalid IDs/dates and `from > to` return HTTP 400. There is no status/search filter on the summary endpoint. |
+| Errors and tests | **VERIFIED** | Missing API key is tested as 401; summary filters, invalid values, empty aggregation, counts, rates, duration, and tenant `$match` are covered by route/service tests. Unexpected errors use the generic HTTP 500 handler described above. No live aggregation was run. |
+
+### C. Idempotency and reservation fencing
+
+| Requirement | Finding | Source and test evidence |
+|---|---|---|
+| Scope | **VERIFIED** | `IdempotencyRecord` has a unique compound index declared on `(tenantId, workflowId, key)`. Service reads, updates, and deletes use the same triplet. The route uses authenticated tenant context and workflow ID. Unit tests cover distinct tenants and workflows. |
+| Payload hash | **VERIFIED** | `computePayloadHash` serializes JSON recursively with sorted object keys and hashes with SHA-256. The route hashes `input ?? {}`; workflow and tenant are separate scope fields. Array order is preserved. Unit tests cover reordered object keys and different payloads. |
+| Same-key behavior | **VERIFIED** | Matching completed requests replay the stored response. Different payload returns HTTP 409 `IDEMPOTENCY_KEY_PAYLOAD_MISMATCH`. A matching active request returns HTTP 409 `IDEMPOTENCY_KEY_IN_FLIGHT`. A missing execution within the creation grace period remains in flight; after the grace period it can be reclaimed only after the execution lookup confirms no document and the conditional claim succeeds. |
+| Reservation race and fencing | **PARTIAL** | Creation uses the compound unique index to arbitrate duplicate inserts; expired records are atomically replaced and stale missing-execution reconciliation rotates a UUID `reservationToken` using a conditional update. The route validates token ownership before starting execution and supplies the token to completion/release operations. Memory unit tests cover duplicate-request simulation and stale-token cleanup/completion attempts. Real MongoDB concurrency was **NOT TESTED**. |
+| Terminal failures and retry | **VERIFIED** | A terminal failed execution is recorded as a completed idempotency result and the same key/payload replays it; this is cached failure replay, not an automatic retry. A `startExecution` exception attempts token-scoped reservation release so a later client request can try again. No explicit retry/redrive API or background retry policy was found (**MISSING**). |
+| Startup/recording failure edge | **PARTIAL** | If execution startup throws, the route releases the matching token reservation. If completion recording fails after execution creation, a later request can reconcile using the persisted execution; this recovery path is source-level behavior, not a live database test. The return value of `recordCompleted`'s conditional update is not checked by the route/service caller. |
+| Failed-result replay test evidence | **PARTIAL** | Route and service tests cover successful response replay, payload conflict, in-flight duplicate requests, and startup-error release. Reconciliation tests cover terminal completion; no dedicated focused test asserting replay of a terminal failed response was identified in the selected test sources. |
+
+### D. Retention and MongoDB indexes
+
+| Requirement | Finding | Source and test evidence |
+|---|---|---|
+| Retention duration | **VERIFIED** | `IdempotencyService` defaults to `24 * 60 * 60 * 1000` milliseconds. Reservation sets `expiresAt` from reservation time; completion refreshes it from completion time. Constructor and method options can override it in code; no environment-based setting was found. The 24-hour duration remains **PROPOSED, NOT APPROVED** as a policy. |
+| Expiration behavior in application code | **VERIFIED** | `reserveKey`/`checkIdempotency` compare `expiresAt` to current time; expired reservation replacement uses an atomic expiry predicate. |
+| Index declarations | **VERIFIED** | `backend/src/models/idempotencyRecord.model.ts` declares the unique tenant/workflow/key index and TTL index `{ expiresAt: 1 }` with `expireAfterSeconds: 0`. Schema tests inspect these declarations only. |
+| Index initialization and readiness | **PARTIAL** | `backend/src/config/database.ts` awaits `mongoose.connect`; `backend/src/index.ts` awaits that connection before listening. No explicit `IdempotencyRecordModel.init()`, `syncIndexes()`, index verification, or awaited index-readiness gate is present in startup. Mongoose/runtime index creation was **NOT TESTED**. |
+| MongoDB TTL creation/expiry | **NOT TESTED** | The conditional Mongo integration test calls `syncIndexes()` and queries MongoDB indexes, but it was deliberately excluded from execution. No approved isolated MongoDB endpoint was used. TTL index existence in a live DB and eventual document deletion remain unverified; declaration alone is not evidence that TTL is active. |
+
+### E. Reservation recovery worker
+
+| Requirement | Finding | Source and test evidence |
+|---|---|---|
+| Worker implementation and startup | **PARTIAL** | `IdempotencyRecoveryWorker` exists in `backend/src/services/executionIdempotency.ts`, but `backend/src/index.ts` does not instantiate/start it. App startup therefore does not run reservation recovery. |
+| DB/index readiness | **MISSING** | If manually started, the worker has no readiness or index gate. Server startup waits for DB connection, but not declared index initialization. |
+| Tenant discovery | **MISSING** | Worker constructor requires one tenant ID; no tenant enumeration or worker provisioning is wired into startup. The database scan is tenant-scoped, but no cross-tenant orchestration exists. |
+| Eligibility and stale claim | **PARTIAL** | `findInFlightRecords` selects one tenant's in-flight records by `createdAt <= cutoff`, ascending, with a batch limit. Missing execution documents inside grace are preserved; after grace, a compare-and-set claim checks tenant/workflow/key/status/execution ID plus prior token and `updatedAt`, then rotates the token. Existing queued/running/compensating executions are preserved; terminal executions are reconciled into a cached response. |
+| Reservation fencing during terminal reconciliation | **PARTIAL** | Missing-execution retry claim uses token/updatedAt fencing. The terminal reconciliation update filters by tenant/workflow/key and `status: "in_flight"` but does not include the observed reservation token or `updatedAt`; its update result is not checked. A concurrent token replacement could therefore race with a stale terminal reconciliation. This is a source-level race risk; it was not reproduced in a runtime test. |
+| Concurrent recovery / multiple instances | **PARTIAL** | `isReconciling` prevents overlap only within one worker instance. No distributed lease/election is present. Conditional stale-claim updates offer some cross-instance protection, but terminal reconciliation is not equivalently fenced. Multi-instance behavior was **NOT TESTED**. |
+| Crash recovery | **PARTIAL** | The scan is batched and sequential; successful item updates persist individually. A later sweep or request-path reconciliation can revisit remaining in-flight records. No crash-injection or restart test was run. |
+| Scheduled errors | **MISSING** | The timer callback invokes `runOnce().catch(() => {})`, silently discarding scheduled failures. Direct `runOnce()` propagates errors; interval-driven runs do not report them. |
+| Shutdown | **PARTIAL** | `stop()` clears the interval and waits for local reconciliation to finish. `backend/src/index.ts` graceful shutdown stops the change-stream watcher, WebSocket server, and HTTP server, but does not stop or await this recovery worker because it is not wired. |
+| Related execution recovery helper | **VERIFIED** | `backend/src/services/executionRecovery.ts` contains pure execution-state analysis and a CAS terminal update helper; it is not a scheduled reservation worker and is not integrated into startup. Unit tests cover evaluation and CAS behavior. |
+
+Worker lifecycle unit tests use memory-backed dependencies. The MongoDB
+integration test that would use real records/indexes was not run. No worker
+was started or wired during this audit.
+
+### F. Frontend compatibility
+
+| Requirement | Finding | Source and test evidence |
+|---|---|---|
+| Endpoints/authentication | **VERIFIED** | `frontend/src/api/executionApi.ts` calls `/api/executions`, `/api/executions/summary`, `/api/executions/:executionId`, and the per-workflow executions endpoint as needed; it sends `X-API-Key` and rejects an empty key. Tenant context is selected by the backend from that key; no client tenant ID is sent. |
+| Pagination and filters | **VERIFIED** | `ExecutionsPage.tsx` requests page size 20 and passes `nextCursor`. It uses workflow history only when a workflow is selected without other filters; otherwise it uses global history with workflow/status/from/to/exact execution ID filters. Dates are converted to ISO strings. |
+| Sorting | **MISSING** | The client/page provide no sort field or direction; backend order remains fixed newest-first. |
+| Response compatibility | **VERIFIED** | The history client expects `executions` and `pagination`, which matches the route response. Its execution type permits both `id` and `_id`; backend raw records have `_id`, `workflowId`, and `status`. The page computes duration from `startedAt`/`completedAt`; it resolves workflow names separately from the workflow list and falls back to the workflow ID. Summary fields and `compensationFailed` naming match the backend. |
+| Errors and details navigation | **VERIFIED** | Client methods translate API error messages or HTTP status into thrown errors; page handlers surface sanitized messages. Detail navigation accepts `id` or `_id` and calls the authenticated detail endpoint. |
+| UI test evidence | **VERIFIED** | Focused global API client, analytics client/helpers, and executions-page rendering tests passed (details below). These are mocked/in-process tests, not browser-to-live-backend verification. |
+
+### G. Exact tests run and limitations
+
+Test scripts were inspected in `backend/package.json` and
+`frontend/package.json`. Backend uses Node's test runner through `tsx`; the
+frontend has no test script, and its tests were invoked with the already
+installed backend `tsx` executable. The selected backend test files use
+injected service/resolver dependencies, in-memory idempotency stores, fake
+startup dependencies, and Mongoose schema metadata. The selected frontend
+tests use mocked API responses/component rendering. The MongoDB integration
+test file, which reads `MONGODB_URI` and may connect to that database, was
+excluded. No dependency was installed or changed.
+
+| Working directory | Exact command | Environment and actual result |
+|---|---|---|
+| `backend/` | `.\node_modules\.bin\tsx.cmd --test src\routes\execution.routes.test.ts src\services\execution.service.test.ts src\services\executionIdempotency.test.ts src\services\executionRecovery.test.ts src\index.test.ts src\models\models.test.ts` | In-process routes/fakes, injected or memory dependencies; no shared/production DB. **VERIFIED**: 162 passed, 0 failed, 0 skipped; exit code 0. |
+| Repository root | `.\backend\node_modules\.bin\tsx.cmd --test frontend\tests\globalExecutions.test.ts frontend\tests\executionAnalytics.test.ts frontend\tests\executionsPageRender.test.ts` | Mocked API and component tests; no live API/database. **VERIFIED**: 32 passed, 0 failed, 0 skipped; exit code 0. |
+
+Not run: `backend/src/services/executionIdempotency.integration.test.ts`,
+full test suites, builds, live MongoDB/index/TTL checks, live API calls,
+multi-instance recovery, deployment, or load tests (**NOT TESTED**).
+
+### H. Files inspected, blockers, and next actions
+
+Exact implementation/test/configuration files inspected:
+
+- Backend: `backend/src/app.ts`, `backend/src/routes/execution.routes.ts`,
+  `backend/src/routes/execution.routes.test.ts`,
+  `backend/src/middleware/tenantAuth.middleware.ts`,
+  `backend/src/middleware/errorHandler.middleware.ts`,
+  `backend/src/services/tenantResolver.ts`,
+  `backend/src/services/execution.service.ts`,
+  `backend/src/services/execution.service.test.ts`,
+  `backend/src/models/WorkflowExecution.ts`,
+  `backend/src/models/idempotencyRecord.model.ts`,
+  `backend/src/models/models.test.ts`,
+  `backend/src/services/executionIdempotency.ts`,
+  `backend/src/services/executionIdempotency.test.ts`,
+  `backend/src/services/executionIdempotency.integration.test.ts` (inspection
+  only),
+  `backend/src/services/executionRecovery.ts`,
+  `backend/src/services/executionRecovery.test.ts`,
+  `backend/src/config/database.ts`, `backend/src/index.ts`,
+  `backend/src/index.test.ts`, and `backend/package.json`.
+- Frontend: `frontend/src/api/executionApi.ts`,
+  `frontend/src/pages/ExecutionsPage.tsx`,
+  `frontend/tests/globalExecutions.test.ts`,
+  `frontend/tests/executionAnalytics.test.ts`,
+  `frontend/tests/executionsPageRender.test.ts`, and
+  `frontend/package.json`.
+
+Only this verification report was modified. No application source or frontend
+source was changed.
+
+Blockers and smallest next actions:
+
+1. Treat the 24-hour retention value as an implementation default only until
+   an authorized owner explicitly approves the retention policy.
+2. Before claiming durable index readiness, establish an approved isolated
+   MongoDB test environment and verify actual unique/TTL index creation and
+   eventual TTL deletion; define an explicit startup index-readiness gate if
+   required.
+3. Keep recovery-worker startup wiring out of scope until tenant discovery,
+   index readiness, observable error/retry handling, graceful shutdown, and
+   multi-instance coordination are designed and approved.
+4. Review and test the terminal reconciliation fencing gap: its conditional
+   update is not tied to the reservation token/version observed during lookup.
+5. Add a direct global-history route test for tenant isolation and a focused
+   terminal-failed-result replay test before treating those exact behaviors
+   as route-level test coverage.
+6. Retry/redrive remains **MISSING**; cached terminal failure replay must not
+   be represented as automatic retry.
+
+### I. Git safety and final audit state
+
+Final verification left the branch at
+`5a12e3f84c3f10f592b7899623adc5a3af820d8b` on `member/mahak`. The seven
+protected untracked files remained present and untracked; the existing
+`stash@{0}` remained unchanged. The only tracked modification is this
+appended report section; no staged changes, source edits, branch operations,
+commit, push, or PR creation occurred.
+
+## 6 November 2026 — Reservation Fencing and Recovery Implementation Plan
+
+### 1. Scope and investigation status
+
+This is an investigation and proposal only. No application source or test
+source was changed, and no test or live database operation was run in this
+phase. The starting branch and SHA were `member/mahak` and
+`5a12e3f84c3f10f592b7899623adc5a3af820d8b`. The existing Phase 2 audit
+report modification, seven protected untracked files, and
+`stash@{0}: temp: preserve Mahak websocket verification documentation` were
+preserved.
+
+Before appending this plan, the complete report was backed up outside the
+repository to
+`C:\Users\Mahak\AppData\Local\Temp\workflow-orchestration-engine-report-before-fencing-plan-20261106-234504.md`.
+The backup SHA-256 and report SHA-256 matched:
+`7C204BA9E24AC5FDF6B29F2CF2B64EEF49AE45E60A74BACC8A36A7377D39EF9C`.
+
+Evidence labels:
+
+- **VERIFIED** — directly supported by inspected source or an existing test.
+- **PARTIAL** — evidence exists but does not establish the full behavior.
+- **MISSING** — required implementation or coverage is absent.
+- **UNKNOWN** — evidence is insufficient to decide.
+- **NOT TESTED** — behavior was not executed in this phase.
+
+The Phase 2 audit section above remains intact. The pre-append backup for
+that audit and this phase's backup are separate files outside the repository.
+
+### 2. Reservation lifecycle and race hypothesis
+
+Relevant current source:
+
+- `backend/src/models/idempotencyRecord.model.ts` — `IdempotencyRecord`
+  fields, unique `(tenantId, workflowId, key)` index, and TTL declaration.
+- `backend/src/services/executionIdempotency.ts` —
+  `mongoIdempotencyDependencies`, `reserveKey`,
+  `reconcileInFlightReservation`, `validateOwnership`, `recordCompleted`,
+  `clearKey`, and `IdempotencyRecoveryWorker`.
+- `backend/src/routes/execution.routes.ts` — execution POST reservation,
+  ownership check, execution dispatch, completion, and error release.
+- `backend/src/services/executionIdempotency.test.ts` — memory-backed
+  lifecycle, terminal reconciliation, recovery, and token-fencing tests.
+- `backend/src/services/executionIdempotency.integration.test.ts` — optional
+  live-MongoDB tests; inspected only and not run.
+- `backend/src/models/models.test.ts` — schema/index declaration tests.
+
+The schema has an optional `reservationToken` (default `null`), `payloadHash`,
+`executionId`, `status`, `expiresAt`, and Mongoose timestamps. A new
+reservation gets a UUID token. Expired reservation replacement uses an
+atomic update requiring the key scope and `expiresAt <= now`, then installs
+the new payload hash, execution ID, in-flight status, expiry, and token.
+Stale missing-execution reconciliation similarly uses status, execution ID,
+observed token when truthy, and observed `updatedAt` when present; it checks
+the returned update result before reporting `RETRY_SAFE`.
+
+Terminal reconciliation differs: after reading an in-flight reservation and
+finding its preallocated execution is terminal, it performs an update
+filtered by `{ tenantId, workflowId, key, status: "in_flight" }`, and sets
+`status: "completed"`, `responseBody`, `executionId`, and `updatedAt`. It
+does not include the observed token, payload hash, execution ID, or timestamp
+in that filter, and it does not check whether the update matched before
+returning `COMPLETED_RECONCILED`.
+
+#### Concrete interleaving (source-supported hypothesis; not reproduced)
+
+1. **A** reads reservation A: scope `(tenant, workflow, key)`, payload hash
+   H-A, execution ID E-A, token T-A, status `in_flight`. A looks up E-A and
+   observes a terminal execution, then pauses before persisting the result.
+2. The record expires. **B** submits a request for the same key. `reserveKey`
+   atomically replaces the expired record with payload H-B, execution E-B,
+   token T-B, a new expiry, and status `in_flight`.
+3. A resumes and issues the terminal-reconciliation update described above.
+4. The current filter checks scope and only `status: "in_flight"`. Those
+   fields still match B's replacement. A can set the row to completed with
+   E-A and A's cached response; the update does not replace H-B, leaving a
+   mismatched payload hash/result record.
+
+This is a **PARTIAL / un-reproduced race hypothesis**. The update filter
+permits this interleaving at source level, but no deterministic race test or
+live MongoDB reproduction was run. If B had already completed its record
+before A's update, A's `status: "in_flight"` predicate would not match; the
+risk is specifically the interval in which B has claimed/replaced the key
+but it remains in flight.
+
+### 3. Proposed minimal atomic conditional update
+
+For terminal reconciliation, issue one MongoDB atomic
+`findOneAndUpdate`/equivalent through the existing `updateRecord` dependency.
+Build the filter from the exact observation and require:
+
+```text
+tenantId
+workflowId
+key
+status: "in_flight"
+executionId: observed executionId
+payloadHash: observed payloadHash
+reservationToken: observed reservationToken (including exact null for legacy rows)
+updatedAt: observed updatedAt, when present
+```
+
+The unique scope plus status and the observed execution/hash/token prevent an
+older reconciliation from completing a replacement claim. Matching the
+observed timestamp adds a compare-and-set guard for legacy rows and any
+same-token state mutation. If the schema can contain tokenless rows, the
+query must match null/missing token consistently and must not omit the
+ownership predicate merely because the observed value is null. Do not invent
+a new field name; `reservationToken` and existing timestamps already exist.
+Whether timestamp comparison is needed in addition to the token should be
+confirmed against Mongoose's `updatedAt` behavior for all update paths.
+
+Check the result of the atomic update. A zero-match/null result means this
+operation is stale: it must not report a persisted reconciliation or return
+its stale response as if it had won. Return an explicit
+`UNCERTAIN_RETAIN`/equivalent internal outcome and allow the normal caller to
+re-read/reconcile on a later request. Do not add a retry loop that can claim
+ownership without rechecking the execution and reservation. A matched
+updated document allows the current reconciliation result to be returned.
+
+This preserves existing API semantics: same tenant/workflow/key and same
+payload still replay the stored terminal result; a different payload remains
+a conflict; an active duplicate remains in flight; and only the currently
+observed reservation can be completed. This proposal introduces no automatic
+execution retry, DLQ, public API change, or schema change.
+
+### 4. Affected files proposed for a later approved implementation
+
+| File | Proposed change | Reason |
+|---|---|---|
+| `backend/src/services/executionIdempotency.ts` | Add the observed-state predicate to the terminal reconciliation update; check the conditional update result and represent a stale no-match without claiming reconciliation succeeded. | This is where the insufficient terminal CAS filter and unchecked update result currently reside. |
+| `backend/src/services/executionIdempotency.test.ts` | Add deterministic memory-backed race tests for stale token, current-token success, and concurrent conflicting update; retain/add replay, payload-conflict, and tenant-isolation assertions as needed. | Existing tests already use `createMemoryIdempotencyDependencies` and are the smallest fast regression suite. |
+| `backend/src/services/executionIdempotency.integration.test.ts` | Add an optional isolated MongoDB CAS/concurrency regression only if approved test infrastructure is available. | Unit fakes cannot prove MongoDB atomic matching semantics under actual concurrent writes. This test must never target shared/production data. |
+
+No schema/model/index file is expected to change: the current token, status,
+execution ID, hash, and timestamps suffice. No API route/contract change is
+expected. If implementation discovers legacy records cannot be safely
+distinguished using their current fields, stop and request schema approval
+rather than weakening the CAS.
+
+### 5. Proposed regression tests
+
+| Test | Arrange and action | Expected result | Suitable evidence |
+|---|---|---|---|
+| Stale-token rejection | A observes T-A and terminal E-A; replace the record with a B reservation using T-B before A's update. | A's CAS matches zero records; B's in-flight state, token, payload hash, execution ID, and expiry remain unchanged; A does not report successful persistence. | Memory dependency test; ideally also isolated MongoDB integration. |
+| Current-token reconciliation | A observes current token and terminal execution; make no intervening change. | Exactly the observed record becomes completed with the reconstructed response; the result reports success. | Memory dependency test plus optional isolated MongoDB integration. |
+| Concurrent reservation changes | Race a terminal CAS with a replacement/completion using a different token/state. | Only an operation whose filter matches the currently stored token/state succeeds; the newer reservation is not overwritten. | Deterministic memory test; MongoDB test needed to establish database atomicity under real concurrent operations. |
+| Terminal result replay | Complete reconciliation for one tenant/workflow/key/payload, then submit same key and payload again. | The stored terminal response (including a failed terminal execution where applicable) is replayed unchanged; no second execution is created. | Existing memory tests cover completed/failed reconciliation and cached response; route-level exact replay assertion may be added if absent. |
+| Payload conflict | Reuse the same scope/key with a different canonical payload. | Existing mismatch/HTTP 409 behavior remains unchanged and original record is preserved. | Existing memory and route tests already cover conflict; retain as regression assertion. |
+| Tenant isolation | Use an observed token from Tenant A against an otherwise matching Tenant B reservation. | No Tenant B document matches/changes. | Memory test; a database test is optional only for Mongo query semantics. |
+
+Existing named coverage includes canonicalization and scope tests,
+`reconcileInFlightReservation: existing completed execution reconciles and
+persists completed response`, `... existing failed execution returns
+recorded failure outcome per contract`, and the `fencing token: Request A
+paused ... Request B ...` test in
+`backend/src/services/executionIdempotency.test.ts`. Existing replay and
+payload mismatch route cases are in
+`backend/src/routes/execution.routes.test.ts`. No test for the exact stale
+terminal-reconciliation interleaving was found. All tests above are plans;
+none were run in this phase.
+
+### 6. Cross-tenant route-level test plan
+
+Authentication is implemented by `backend/src/middleware/tenantAuth.middleware.ts`
+and `backend/src/services/tenantResolver.ts`; API key identity is hashed and
+the resolved tenant ID is passed to the route service. Global routes are
+registered through `backend/src/app.ts` and implemented in
+`backend/src/routes/execution.routes.ts`.
+
+| Scenario | Existing evidence | Proposed additional test / expected behavior |
+|---|---|---|
+| History cross-tenant access: Tenant A asks for data containing Tenant B records | **PARTIAL** — service test asserts the global history query contains trusted `tenantId`; current route test proves the per-workflow history response is empty for the other tenant, not the global endpoint. | Add one global-history route/service composition test with two-tenant fixture records and Tenant A API key. Assert only A's records are returned and query uses A's tenant ID. Include `tenantId=B` query input and verify it cannot change authorization. |
+| Summary isolation: authenticated A with mixed-tenant fixture data | **PARTIAL** — existing summary route test confirms authenticated tenant is forwarded; service test asserts aggregation begins with `$match: { tenantId }`. The existing route test does not aggregate a mixed-tenant dataset. | Prefer one combined route/service test that runs the actual service with a fake aggregate dependency that honors/captures the `$match`; assert B's fixture is excluded and A's counts are returned. |
+| Detail cross-tenant access: A requests B's execution ID | **VERIFIED in route test** — `does not return another tenant's execution details or compensation metadata` expects HTTP 404 `EXECUTION_NOT_FOUND`. Service query is tenant-scoped. | No duplicate test needed; retain the existing test. |
+| Missing identity | **VERIFIED for summary; PARTIAL for all endpoints** — summary without API key returns HTTP 401 `UNAUTHORIZED`; middleware is applied to global history and detail as well. | No new test needed unless uniform coverage across each route is required; preserve existing 401 contract, do not invent a status. |
+| Valid same-tenant access | **VERIFIED** — detail returns 200; history route tests return fixture data. Summary returns 200. | No additional test needed for the basic success path. |
+
+The smallest useful added coverage is two combined global-route/service tests:
+one history test and one summary aggregation test. The detail isolation and
+missing-key tests already exist. These additional tests should use the
+existing ephemeral HTTP server, resolver test keys, and injected/fake
+database dependencies; no shared or production database is necessary.
+
+### 7. Recovery worker minimum-safe integration checklist
+
+The recovery worker remains unstarted and unwired. Minimum requirements
+before any future integration:
+
+| Area | Minimum safe requirement |
+|---|---|
+| Database and indexes | Await successful database connection, then explicitly initialize/verify the required unique reservation index before recovery starts. Decide whether TTL index readiness is required for service readiness, separately from application-level expiry checks. Fail startup or keep recovery disabled with a visible error if required index setup/verification fails. Do not claim TTL deletion from the schema declaration. |
+| Tenant discovery | Define an approved source of active tenant IDs and lifecycle events. The existing worker accepts one tenant ID; define startup enumeration, newly provisioned tenant onboarding, inactive/deleted tenant behavior, and whether a worker is created per tenant or scans all tenants safely. No supported recovery-worker enumeration contract is currently wired. |
+| Multi-instance coordination | Define an explicit distributed lease/election or prove idempotent CAS semantics for every transition. Specify lease owner/token, expiry, renewal, crash takeover, and what happens when an old process resumes after lease expiry. Local `isReconciling` is not distributed coordination. |
+| Reservation fencing | Every recovery write must include tenant/workflow/key, current status, observed token (including legacy null behavior), and observed execution/payload/state fields needed for CAS. Check the atomic update result; no-match is stale work, not success. Cover both missing-execution claims and terminal reconciliation. |
+| Error reporting | Replace the interval's swallowed `.catch(() => {})` with structured logger output and observable counters/alerts. Define bounded infrastructure retry/backoff separately; do not make that an execution retry. Avoid logging API keys or payload/customer data. |
+| Graceful lifecycle | After database/index readiness, start recovery only after its tenant/lease prerequisites are satisfied. On shutdown, stop scheduling new sweeps, await the current sweep, release/expire distributed ownership safely, then stop database resources. Startup failure must clean up any partially started worker and fail visibly. Add tests for ordering, failures, in-flight stop, and idempotent shutdown. |
+
+Coordinator/Saransh decisions needed before worker integration: tenant
+enumeration source and provisioning lifecycle; required index/readiness
+policy; distributed lease/election semantics and lease duration; behavior on
+index initialization failure; structured error/alerting and infrastructure
+retry policy; and shutdown/drain timeout. The 24-hour record retention
+duration is still proposed and requires separate policy approval.
+
+### 8. Proposed acceptance criteria
+
+1. A deterministic test demonstrates the stale terminal reconciliation
+   interleaving and passes only when the old operation cannot alter the
+   replacement reservation.
+2. A current-token terminal reconciliation updates exactly one matching
+   record; no-match is surfaced as stale/uncertain and never reported as a
+   successful persisted reconciliation.
+3. Existing same-payload replay, changed-payload conflict, in-flight
+   duplicate, terminal-failure replay, and tenant-isolation behavior remains
+   unchanged.
+4. An isolated MongoDB test, if approved and available, confirms actual
+   conditional update behavior under concurrent writes; no shared or
+   production URI is used.
+5. Two cross-tenant tests cover global history and summary aggregation using
+   authenticated tenant context and mixed-tenant fixtures.
+6. Existing detail 404 and missing-auth 401 contracts remain unchanged.
+7. TypeScript build and selected tests pass after implementation; commands,
+   results, and environment assumptions are recorded. No automatic retry,
+   DLQ, API, or schema change is introduced without separate approval.
+
+### 9. Risks, rollback, and rough effort estimate
+
+Primary risks are legacy rows with missing/null token, timestamp behavior
+under Mongoose updates, a stale operation returning a response before
+confirming its write, and false-positive confidence from fake dependencies
+that do not reproduce database concurrency. The plan therefore requires
+explicit legacy-null matching, checking the atomic result, and labeling
+memory-only evidence separately from MongoDB evidence.
+
+Rough estimate (planning estimate, not measured): about 4–8 engineering
+hours for the service CAS, deterministic unit tests, route-level tenant tests,
+and targeted validation; add about 4–8 hours if an approved isolated
+MongoDB concurrency regression environment is available and needs adaptation.
+Recovery-worker readiness/integration is a separate, decision-dependent
+effort and is not included.
+
+If an approved implementation fails tests, rollback should be limited to the
+specific implementation diff after review. Do not reset the branch or remove
+the existing report, protected untracked files, or stash. No rollback action
+is authorized or performed by this plan.
+
+### 10. Approval boundary
+
+This plan does not authorize implementation. Explicit approval from
+Saransh/coordinator is required before changing source or tests, including
+approval of the proposed CAS fields and stale-outcome behavior. A schema
+change, API change, worker startup, MongoDB test target, retention policy,
+tenant-discovery model, or distributed lease design each requires its own
+explicit decision if later found necessary.
