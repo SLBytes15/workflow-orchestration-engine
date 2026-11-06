@@ -731,3 +731,46 @@ that a deployed production environment has been tested.
 **NOT RUN — live deployed end-to-end test**
 - No live deployed end-to-end test was performed in this verification.
 - No experimental writes against shared MongoDB Atlas M0 were performed.
+
+## Execution UI and WebSocket Integration Update - 2026-11-06
+
+**Frontend REST integration**
+- `frontend/src/api/executionApi.ts` provides the execution REST API helpers.
+- The execution page loads execution history and summary data through REST requests authenticated with the `X-API-Key` header.
+- The summary helper supports workflow and date filters and validates the returned summary payload.
+
+**WebSocket connection and authentication**
+- `frontend/src/api/executionRealtime.ts` requests a fresh ticket for each connection attempt and connects to the execution WebSocket endpoint.
+- The backend ticket route requires API-key authentication. The tenant is derived from authenticated request context, not from client-supplied tenant data.
+- Tickets are 32-byte random base64url values, tenant-bound, single-use, and valid for 60 seconds.
+- The frontend validates incoming event names and payload fields before forwarding events to the page.
+- Supported event types are `execution.updated`, `execution.completed`, and `execution.failed`.
+- The backend publishes notifications for persisted execution states and scopes delivery to the owning tenant.
+
+**Reconnect and REST reconciliation**
+- The frontend reconnects with exponential backoff, starting at 1 second and capped at 30 seconds.
+- Each reconnect attempt obtains a new ticket.
+- After a successful reconnection, `ExecutionsPage.tsx` reloads execution history and summary through REST.
+- REST therefore provides the reconciliation path after a connection interruption; WebSocket notifications are not a durable event replay mechanism.
+
+**Verification performed on 2026-11-06**
+- Manual browser checks confirmed that the execution dashboard loaded and displayed execution records and summary metrics.
+- Failed-status and workflow filters were checked, along with Load more pagination.
+- The execution details drawer was opened and displayed execution metadata, timeline, and error information.
+- The Live updates connection indicator was observed.
+- A browser DevTools Offline-to-online network toggle was performed. The connection indicator returned to Live updates without manually refreshing the page.
+- These checks establish a browser connection/reconnection smoke check, not proof of delivery of a new execution event during a live workflow run.
+
+**Automated test coverage inspected**
+- Frontend: `frontend/tests/executionRealtime.test.ts` covers event validation, ticket renewal after disconnect, reconnect callback, connection status transitions, update helpers, insertion, and filtering.
+- Backend: ticket route and ticket service tests cover authentication, tenant binding, expiry, and single-use behavior.
+- Backend WebSocket tests cover handshake rejection, tenant-scoped delivery, socket cleanup, event mapping, and publishing behavior.
+- `backend/src/services/executionRealtime.integration.test.ts` covers streaming persisted execution transitions to the owning tenant.
+- Test case names were inspected for this documentation update. A fresh execution of these tests was not performed as part of this update; test coverage inspection is not a test-pass claim.
+
+**NOT TESTED**
+- Browser verification of receiving a newly generated execution event while a workflow is actively running.
+- Production/deployed end-to-end behavior.
+- WebSocket recovery across backend process restarts or multiple backend instances.
+- Durable event replay or guaranteed delivery after a connection interruption.
+- Exhaustive reconnect behavior under prolonged outages, repeated ticket failures, or server-side failures.
